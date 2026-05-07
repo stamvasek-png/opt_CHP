@@ -272,6 +272,7 @@ def to_excel_scenarios(scenarios):
                 'Nákl EE [k€]':    -(r['Nákl EE import [€]'].sum() + r['Nákl EE EK [€]'].sum()) / 1000,
                 'Nákl imp tepla [k€]': -(r['Nákl imp tepla [€]'].sum()) / 1000,
                 'Nákl starty+BESS [k€]': -(r['Nákl starty [€]'].sum() + r['Nákl BESS [€]'].sum()) / 1000,
+                'Nákl servis KGJ [k€]': -(r['Nákl servis KGJ [€]'].sum()) / 1000,
                 'Zisk celkem [k€]': r['Hodinový zisk [€]'].sum() / 1000,
             })
         if bd_rows:
@@ -552,7 +553,7 @@ with t_gen:
         p['internal_ee_use']   = st.checkbox(
             "Ušetřit distribuci při interní spotřebě EE", value=True,
             help="Pokud spotřebu EE (EK, BESS) pokrývá lokální výroba (KGJ, FVE), distribuci neplatíme.")
-        p['h_price']           = st.number_input("Prodejní cena tepla [€/MWh]",   value=120.0)
+        p['h_price']           = st.number_input("Prodejní cena tepla [€/MWh]",   value=95.0)
         p['h_cover']           = st.slider("Minimální pokrytí poptávky tepla", 0.0, 1.0, 0.99, step=0.01)
         p['shortfall_penalty'] = st.number_input("Penalizace za nedodání tepla [€/MWh]", value=500.0,
             help="Doporučeno 3–5× cena tepla. Vyšší = silnější priorita pokrytí poptávky.")
@@ -563,13 +564,14 @@ with t_tech:
         st.subheader("Kogenerace (KGJ)")
         c1, c2 = st.columns(2)
         with c1:
-            p['k_th']          = st.number_input("Jmenovitý tepelný výkon [MW]",  value=1.09)
-            p['k_eff_th']      = st.number_input("Tepelná účinnost η_th [-]",      value=0.46)
-            p['k_eff_el']      = st.number_input("Elektrická účinnost η_el [-]",   value=0.40)
-            p['k_min']         = st.slider("Min. zatížení [%]", 0, 100, 55) / 100
+            p['k_th']          = st.number_input("Jmenovitý tepelný výkon [MW]",  value=0.605)
+            p['k_eff_th']      = st.number_input("Tepelná účinnost η_th [-]",      value=0.531)
+            p['k_eff_el']      = st.number_input("Elektrická účinnost η_el [-]",   value=0.395)
+            p['k_min']         = st.slider("Min. zatížení [%]", 0, 100, 50) / 100
         with c2:
-            p['k_start_cost']  = st.number_input("Náklady na start [€/start]",    value=1200.0)
+            p['k_start_cost']  = st.number_input("Náklady na start [€/start]",    value=150.0)
             p['k_min_runtime'] = st.number_input("Min. doba běhu [hod]",          value=4, min_value=1)
+            p['k_service_cost']= st.number_input("Servisní náklad [€/MWh el.]",   value=14.0)
         k_el_derived = p['k_th'] * (p['k_eff_el'] / p['k_eff_th'])
         p['k_el'] = k_el_derived
         st.caption(f"ℹ️ Odvozený el. výkon: **{k_el_derived:.3f} MW** | "
@@ -578,10 +580,10 @@ with t_tech:
         p['kgj_hour_limit_on'] = st.checkbox("Omezit max. počet provozních hodin KGJ / rok", value=False)
         if p['kgj_hour_limit_on']:
             p['kgj_hour_limit'] = st.number_input("Max. hodin provozu KGJ / rok", value=6000, min_value=1)
-        p['kgj_gas_fix'] = st.checkbox("Fixní cena plynu pro KGJ")
+        p['kgj_gas_fix'] = st.checkbox("Fixní cena plynu pro KGJ", value=True)
         if p['kgj_gas_fix']:
             p['kgj_gas_fix_price'] = st.number_input("Fixní cena plynu – KGJ [€/MWh]",
-                value=float(st.session_state.avg_gas_raw))
+                value=40.0)
         # Proměnná účinnost dle výkonu
         p['kgj_var_eff'] = st.checkbox("Proměnná účinnost dle výkonu", value=False,
             help="Linearizovaná 2-bodová křivka: účinnost při min. zátěži vs. jmenovitém výkonu")
@@ -600,21 +602,21 @@ with t_tech:
     # ── Kotel ─────────────────────────────────────
     if use_boil:
         st.subheader("Plynový kotel")
-        p['b_max']    = st.number_input("Max. výkon [MW]",    value=3.91)
-        p['boil_eff'] = st.number_input("Účinnost kotle [-]", value=0.95)
+        p['b_max']    = st.number_input("Max. výkon [MW]",    value=4.44)
+        p['boil_eff'] = st.number_input("Účinnost kotle [-]", value=0.86)
         p['boil_hour_limit_on'] = st.checkbox("Omezit max. počet provozních hodin kotle / rok", value=False)
         if p['boil_hour_limit_on']:
             p['boil_hour_limit'] = st.number_input("Max. hodin provozu kotle / rok", value=4000, min_value=1)
-        p['boil_gas_fix'] = st.checkbox("Fixní cena plynu pro kotel")
+        p['boil_gas_fix'] = st.checkbox("Fixní cena plynu pro kotel", value=True)
         if p['boil_gas_fix']:
             p['boil_gas_fix_price'] = st.number_input("Fixní cena plynu – kotel [€/MWh]",
-                value=float(st.session_state.avg_gas_raw))
+                value=40.0)
 
     # ── Elektrokotel ──────────────────────────────
     if use_ek:
         st.subheader("Elektrokotel")
-        p['ek_max'] = st.number_input("Max. výkon [MW]",  value=0.61)
-        p['ek_eff'] = st.number_input("Účinnost EK [-]",  value=0.98)
+        p['ek_max'] = st.number_input("Max. výkon [MW]",  value=0.4)
+        p['ek_eff'] = st.number_input("Účinnost EK [-]",  value=0.99)
         p['ek_ee_fix'] = st.checkbox("Fixní cena EE pro elektrokotel")
         if p['ek_ee_fix']:
             p['ek_ee_fix_price'] = st.number_input("Fixní cena EE – EK [€/MWh]",
@@ -623,7 +625,7 @@ with t_tech:
     # ── TES ───────────────────────────────────────
     if use_tes:
         st.subheader("Nádrž TES")
-        p['tes_cap']  = st.number_input("Kapacita [MWh]", value=10.0)
+        p['tes_cap']  = st.number_input("Kapacita [MWh]", value=1.52)
         p['tes_loss'] = st.number_input("Ztráta [%/h]",   value=0.5) / 100
 
     # ── BESS ──────────────────────────────────────
@@ -907,6 +909,7 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
             ((p_ee_ek + dist_buy_net) * ee_ek_in                          if u['ek']       else 0) +
             (p['imp_price'] * q_imp[t]                                    if u['ext_heat'] else 0) +
             (p['k_start_cost'] * start[t]                                 if u['kgj']      else 0) +
+            (p.get('k_service_cost', 0.0) * (c0_el * on[t] + c1_el * q_kgj[t]) if u['kgj'] else 0) +
             (p['bess_cycle_cost'] * (bess_cha[t] + bess_dis[t])           if u['bess']     else 0) +
             bess_dist_buy_cost + bess_dist_sell_cost +
             p['shortfall_penalty'] * heat_shortfall[t] +
@@ -960,7 +963,7 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
     rev_teplo_h, rev_ee_h = [], []
     c_gas_kgj_h, c_gas_boil_h = [], []
     c_ee_imp_h, c_ee_ek_h, c_imp_heat_h = [], [], []
-    c_start_h, c_bess_h, c_penalty_h = [], [], []
+    c_start_h, c_bess_h, c_penalty_h, c_service_h = [], [], [], []
     co2_kgj_h, co2_kotel_h, co2_grid_h = [], [], []
     co2_gas_f   = p.get('co2_gas_factor',  0.202)
     co2_grid_f  = p.get('co2_grid_factor', 0.250)
@@ -984,6 +987,7 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         ce2 = (p_ee_ekh + dist_b) * res['EE do EK [MW]'].iloc[t] if u['ek'] else 0
         ci  = p['imp_price'] * res['Import tepla [MW_th]'].iloc[t] if u['ext_heat'] else 0
         cs  = p['k_start_cost'] * vv(start, t) if u['kgj'] else 0
+        csv = p.get('k_service_cost', 0.0) * res['EE z KGJ [MW]'].iloc[t] if u['kgj'] else 0
         cb  = (p['bess_cycle_cost'] * (res['BESS nabíjení [MW]'].iloc[t] + res['BESS vybíjení [MW]'].iloc[t])
                if u['bess'] else 0)
         cp  = p['shortfall_penalty'] * res['Shortfall [MW]'].iloc[t]
@@ -999,6 +1003,7 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         c_ee_imp_h.append(ce1);  c_ee_ek_h.append(ce2)
         c_imp_heat_h.append(ci); c_start_h.append(cs)
         c_bess_h.append(cb);     c_penalty_h.append(cp)
+        c_service_h.append(csv)
 
     res['Rev teplo [€]']      = rev_teplo_h
     res['Rev EE [€]']         = rev_ee_h
@@ -1008,6 +1013,7 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
     res['Nákl EE EK [€]']     = c_ee_ek_h
     res['Nákl imp tepla [€]'] = c_imp_heat_h
     res['Nákl starty [€]']    = c_start_h
+    res['Nákl servis KGJ [€]']= c_service_h
     res['Nákl BESS [€]']      = c_bess_h
     res['Nákl penalizace [€]']= c_penalty_h
     res['Hodinový zisk [€]']  = [
@@ -1015,6 +1021,7 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         - c_gas_kgj_h[t] - c_gas_boil_h[t]
         - c_ee_imp_h[t] - c_ee_ek_h[t]
         - c_imp_heat_h[t] - c_start_h[t]
+        - c_service_h[t]
         - c_bess_h[t] - c_penalty_h[t]
         for t in range(T)
     ]
@@ -1633,15 +1640,16 @@ if st.session_state.scenario_results is not None:
             'Nákl EE':         -(r['Nákl EE import [€]'].sum() + r['Nákl EE EK [€]'].sum()) / 1000,
             'Nákl imp tepla':  -(r['Nákl imp tepla [€]'].sum()) / 1000,
             'Nákl starty/BESS':-(r['Nákl starty [€]'].sum() + r['Nákl BESS [€]'].sum()) / 1000,
+            'Nákl servis KGJ':-(r['Nákl servis KGJ [€]'].sum()) / 1000,
         })
 
     if breakdown_data:
         df_bd = pd.DataFrame(breakdown_data)
         fig_bd = go.Figure()
         colors_pos = ['#27ae60', '#2ecc71']
-        colors_neg = ['#e74c3c', '#c0392b', '#e67e22', '#95a5a6']
+        colors_neg = ['#e74c3c', '#c0392b', '#e67e22', '#95a5a6', '#7f8c8d']
         pos_cols = ['Rev teplo', 'Rev EE']
-        neg_cols = ['Nákl plyn', 'Nákl EE', 'Nákl imp tepla', 'Nákl starty/BESS']
+        neg_cols = ['Nákl plyn', 'Nákl EE', 'Nákl imp tepla', 'Nákl starty/BESS', 'Nákl servis KGJ']
         for col, color in zip(pos_cols, colors_pos):
             fig_bd.add_trace(go.Bar(name=col, x=df_bd['Profil'], y=df_bd[col],
                                     marker_color=color))
@@ -1670,6 +1678,7 @@ if st.session_state.scenario_results is not None:
                 'EE nákup': row['Nákl EE'],
                 'Imp. teplo': row['Nákl imp tepla'],
                 'Starty/BESS': row['Nákl starty/BESS'],
+                'Servis KGJ': row['Nákl servis KGJ'],
             }
             labels = [''] + list(items.keys()) + ['Zisk']
             values = [0.0] + list(items.values()) + [0.0]
@@ -1738,7 +1747,8 @@ if st.session_state.scenario_results is not None:
                 c_gas_total     = res['Nákl plyn KGJ [€]'].sum() + res['Nákl plyn kotel [€]'].sum()
                 c_ee_total      = res['Nákl EE import [€]'].sum() + res['Nákl EE EK [€]'].sum()
                 c_imp_total     = res['Nákl imp tepla [€]'].sum()
-                c_other_total   = res['Nákl starty [€]'].sum() + res['Nákl BESS [€]'].sum()
+                c_other_total   = (res['Nákl starty [€]'].sum() + res['Nákl BESS [€]'].sum()
+                                   + res['Nákl servis KGJ [€]'].sum())
 
                 st.markdown("#### 📊 Klíčové Metriky")
                 m1, m2, m3, m4, m5, m6 = st.columns(6)
