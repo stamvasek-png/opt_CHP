@@ -571,7 +571,7 @@ with t_tech:
         with c2:
             p['k_start_cost']  = st.number_input("Náklady na start [€/start]",    value=150.0)
             p['k_min_runtime'] = st.number_input("Min. doba běhu [hod]",          value=4, min_value=1)
-            p['k_service_cost']= st.number_input("Servisní náklad [€/MWh el.]",   value=14.0)
+            p['k_service_cost']= st.number_input("Servisní náklad [€/h provozu]", value=14.0)
         k_el_derived = p['k_th'] * (p['k_eff_el'] / p['k_eff_th'])
         p['k_el'] = k_el_derived
         st.caption(f"ℹ️ Odvozený el. výkon: **{k_el_derived:.3f} MW** | "
@@ -909,7 +909,7 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
             ((p_ee_ek + dist_buy_net) * ee_ek_in                          if u['ek']       else 0) +
             (p['imp_price'] * q_imp[t]                                    if u['ext_heat'] else 0) +
             (p['k_start_cost'] * start[t]                                 if u['kgj']      else 0) +
-            (p.get('k_service_cost', 0.0) * (c0_el * on[t] + c1_el * q_kgj[t]) if u['kgj'] else 0) +
+            (p.get('k_service_cost', 0.0) * on[t]                            if u['kgj'] else 0) +
             (p['bess_cycle_cost'] * (bess_cha[t] + bess_dis[t])           if u['bess']     else 0) +
             bess_dist_buy_cost + bess_dist_sell_cost +
             p['shortfall_penalty'] * heat_shortfall[t] +
@@ -987,7 +987,7 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         ce2 = (p_ee_ekh + dist_b) * res['EE do EK [MW]'].iloc[t] if u['ek'] else 0
         ci  = p['imp_price'] * res['Import tepla [MW_th]'].iloc[t] if u['ext_heat'] else 0
         cs  = p['k_start_cost'] * vv(start, t) if u['kgj'] else 0
-        csv = p.get('k_service_cost', 0.0) * res['EE z KGJ [MW]'].iloc[t] if u['kgj'] else 0
+        csv = p.get('k_service_cost', 0.0) * res['KGJ on'].iloc[t] if u['kgj'] else 0
         cb  = (p['bess_cycle_cost'] * (res['BESS nabíjení [MW]'].iloc[t] + res['BESS vybíjení [MW]'].iloc[t])
                if u['bess'] else 0)
         cp  = p['shortfall_penalty'] * res['Shortfall [MW]'].iloc[t]
