@@ -1,5 +1,7 @@
 import io
 import re
+import pickle
+from pathlib import Path
 import streamlit as st
 import pandas as pd
 import numpy as np
@@ -9,6 +11,50 @@ from plotly.subplots import make_subplots
 from datetime import datetime, timedelta
 
 st.set_page_config(page_title="KGJ Strategy Expert PRO", layout="wide")
+
+CACHE_DIR  = Path(__file__).parent / 'cache'
+CACHE_FILE = CACHE_DIR / 'last_run.pkl'
+CACHE_KEYS = [
+    'scenario_results', 'monthly_profile_results', 'annual_plan_result',
+    'sensitivity_results', 'df_main', 'uses', 'fwd_data',
+    'avg_ee_raw', 'avg_gas_raw', 'ee_new', 'gas_new',
+]
+
+
+def save_cache():
+    try:
+        CACHE_DIR.mkdir(parents=True, exist_ok=True)
+        data = {k: st.session_state.get(k) for k in CACHE_KEYS}
+        with open(CACHE_FILE, 'wb') as f:
+            pickle.dump(data, f)
+    except Exception as e:
+        st.warning(f"Nepodařilo se uložit cache: {e}")
+
+
+def load_cache():
+    if not CACHE_FILE.exists():
+        return False
+    try:
+        with open(CACHE_FILE, 'rb') as f:
+            data = pickle.load(f)
+        for k, v in data.items():
+            if v is not None:
+                st.session_state[k] = v
+        return True
+    except Exception as e:
+        st.warning(f"Nepodařilo se načíst cache: {e}")
+        return False
+
+
+def clear_cache():
+    try:
+        if CACHE_FILE.exists():
+            CACHE_FILE.unlink()
+    except Exception:
+        pass
+    for k in CACHE_KEYS:
+        st.session_state[k] = None
+    st.session_state._cache_loaded = True
 
 # ── Barvy profilů (konzistentní napříč všemi grafy) ──────────────────
 PROFILE_COLORS = {
@@ -66,6 +112,10 @@ for key, default in [
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
+
+if not st.session_state.get('_cache_loaded'):
+    load_cache()
+    st.session_state._cache_loaded = True
 
 st.title("🚀 KGJ Strategy & Dispatch Optimizer PRO")
 
@@ -384,6 +434,19 @@ def to_excel_sensitivity(sa_df, profile_name, gas_range, ee_range, steps):
 # SIDEBAR
 # ────────────────────────────────────────────────
 with st.sidebar:
+    if CACHE_FILE.exists():
+        try:
+            _ts = datetime.fromtimestamp(CACHE_FILE.stat().st_mtime).strftime('%d.%m. %H:%M')
+            st.caption(f"💾 Cache: poslední běh {_ts}")
+        except Exception:
+            st.caption("💾 Cache: dostupná")
+        if st.button("🗑️ Vyčistit cache výsledků", use_container_width=True):
+            clear_cache()
+            st.rerun()
+    else:
+        st.caption("💾 Cache: prázdná")
+
+    st.divider()
     st.header("⚙️ Technologie na lokalitě")
     use_kgj      = st.checkbox("Kogenerace (KGJ)",    value=True)
     use_boil     = st.checkbox("Plynový kotel",        value=True)
@@ -1277,6 +1340,7 @@ if st.session_state.fwd_data is not None and loc_file is not None:
         st.session_state.annual_plan_result = None
         st.session_state.df_main = df.copy()
         st.session_state.uses = uses
+        save_cache()
         st.success("✅ Analýza dokončena!")
 
 # ────────────────────────────────────────────────
@@ -1417,6 +1481,7 @@ if st.session_state.monthly_profile_results is not None:
             if combined_frames:
                 res_annual = pd.concat(combined_frames, ignore_index=True)
                 st.session_state['annual_plan_result'] = res_annual
+                save_cache()
                 st.success(f"✅ Roční plán sestaven – {len(res_annual):,} hodin, zisk: {res_annual['Hodinový zisk [€]'].sum():,.0f} €")
             else:
                 st.error("❌ Nepodařilo se sestavit roční plán.")
@@ -1881,6 +1946,7 @@ if st.session_state.scenario_results is not None:
             st.error("❌ Citlivostní analýza selhala.")
         else:
             st.session_state.sensitivity_results = sa_df.to_dict('records')
+            save_cache()
             st.success("✅ Hotovo!")
 
     if st.session_state.sensitivity_results:
