@@ -456,6 +456,10 @@ with st.sidebar:
     use_fve      = st.checkbox("Fotovoltaika (FVE)",   value=True)
     use_ext_heat = st.checkbox("Nákup tepla (Import)", value=True)
 
+uses = dict(kgj=use_kgj, boil=use_boil, ek=use_ek, tes=use_tes,
+            bess=use_bess, fve=use_fve, ext_heat=use_ext_heat)
+
+with st.sidebar:
     st.divider()
     st.header("📈 Tržní ceny (FWD)")
     fwd_file = st.file_uploader("Nahraj FWD křivku (Excel)", type=["xlsx"])
