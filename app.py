@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="KGJ Strategy Expert PRO", layout="wide")
 
-CACHE_DIR  = Path.home() / '.opt_chp_cache'
+CACHE_DIR  = Path(__file__).parent / 'cache'
 CACHE_FILE = CACHE_DIR / 'last_run.pkl'
 CACHE_KEYS = [
     'scenario_results', 'monthly_profile_results', 'annual_plan_result',
