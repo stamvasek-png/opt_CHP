@@ -1344,6 +1344,8 @@ if st.session_state.fwd_data is not None and loc_file is not None:
         st.session_state.annual_plan_result = None
         st.session_state.df_main = df.copy()
         st.session_state.uses = uses
+        for _k in ('_xlsx_scen', '_xlsx_monthly', '_xlsx_sa'):
+            st.session_state.pop(_k, None)
         save_cache()
         st.success("✅ Analýza dokončena!")
 
@@ -1421,14 +1423,17 @@ if st.session_state.monthly_profile_results is not None:
         st.info(f"Doporučená strategie: {narrative}")
 
     # ── Download měsíční analýzy ──
-    xlsx_monthly = to_excel_monthly(monthly_pr, MONTH_NAMES)
-    st.download_button(
-        label="📥 Stáhnout měsíční analýzu (Excel)",
-        data=xlsx_monthly,
-        file_name="kgj_mesicni_analyza.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl_monthly"
-    )
+    if st.button("📦 Připravit Excel měsíční analýzy ke stažení", key="prep_monthly"):
+        with st.spinner("⏳ Generuji Excel …"):
+            st.session_state['_xlsx_monthly'] = to_excel_monthly(monthly_pr, MONTH_NAMES)
+    if st.session_state.get('_xlsx_monthly') is not None:
+        st.download_button(
+            label="📥 Stáhnout měsíční analýzu (Excel)",
+            data=st.session_state['_xlsx_monthly'],
+            file_name="kgj_mesicni_analyza.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_monthly"
+        )
 
     # ── R2: Kombinovaný roční plán ──
     st.divider()
@@ -1900,14 +1905,17 @@ if st.session_state.scenario_results is not None:
 
     # ── Download scénářů ──
     st.divider()
-    xlsx_scen = to_excel_scenarios(scenarios)
-    st.download_button(
-        label="📥 Stáhnout scénáře (Excel)",
-        data=xlsx_scen,
-        file_name="kgj_scenare.xlsx",
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        key="dl_scenarios"
-    )
+    if st.button("📦 Připravit Excel scénářů ke stažení", key="prep_scenarios"):
+        with st.spinner("⏳ Generuji Excel …"):
+            st.session_state['_xlsx_scen'] = to_excel_scenarios(scenarios)
+    if st.session_state.get('_xlsx_scen') is not None:
+        st.download_button(
+            label="📥 Stáhnout scénáře (Excel)",
+            data=st.session_state['_xlsx_scen'],
+            file_name="kgj_scenare.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="dl_scenarios"
+        )
 
 # ─────────────────────────────────────────────
 # CITLIVOSTNÍ ANALÝZA (standalone)
@@ -1992,17 +2000,20 @@ if st.session_state.scenario_results is not None:
             use_container_width=True, hide_index=True
         )
 
-        xlsx_sa = to_excel_sensitivity(
-            sa_df=sa_df,
-            profile_name=sa_profile,
-            gas_range=sa_gas_range,
-            ee_range=sa_ee_range,
-            steps=sa_steps
-        )
-        st.download_button(
-            label="📥 Stáhnout citlivostní analýzu (Excel)",
-            data=xlsx_sa,
-            file_name="kgj_citlivostni_analyza.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            key="dl_sensitivity"
-        )
+        if st.button("📦 Připravit Excel citlivostní analýzy ke stažení", key="prep_sensitivity"):
+            with st.spinner("⏳ Generuji Excel …"):
+                st.session_state['_xlsx_sa'] = to_excel_sensitivity(
+                    sa_df=sa_df,
+                    profile_name=sa_profile,
+                    gas_range=sa_gas_range,
+                    ee_range=sa_ee_range,
+                    steps=sa_steps
+                )
+        if st.session_state.get('_xlsx_sa') is not None:
+            st.download_button(
+                label="📥 Stáhnout citlivostní analýzu (Excel)",
+                data=st.session_state['_xlsx_sa'],
+                file_name="kgj_citlivostni_analyza.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_sensitivity"
+            )
