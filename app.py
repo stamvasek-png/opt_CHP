@@ -617,9 +617,6 @@ with t_gen:
         p['dist_ee_sell']      = st.number_input("Distribuce prodej EE [€/MWh]",  value=2.0)
         p['gas_dist']          = st.number_input("Distribuce plyn [€/MWh]",        value=5.0)
     with col2:
-        p['internal_ee_use']   = st.checkbox(
-            "Ušetřit distribuci při interní spotřebě EE", value=True,
-            help="Pokud spotřebu EE (EK, BESS) pokrývá lokální výroba (KGJ, FVE), distribuci neplatíme.")
         p['h_price']           = st.number_input("Prodejní cena tepla [€/MWh]",   value=95.0)
         p['h_cover']           = st.slider("Minimální pokrytí poptávky tepla", 0.0, 1.0, 0.99, step=0.01)
         p['shortfall_penalty'] = st.number_input("Penalizace za nedodání tepla [€/MWh]", value=500.0,
@@ -949,8 +946,10 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         ee_ek_in   = q_ek[t] / ek_eff                            if u['ek']  else 0
         model += ee_kgj_out + fve_p + ee_import[t] + bess_dis[t] == ee_ek_in + bess_cha[t] + ee_export[t]
 
-        dist_sell_net       = p['dist_ee_sell'] if not p['internal_ee_use'] else 0.0
-        dist_buy_net        = p['dist_ee_buy']  if not p['internal_ee_use'] else 0.0
+        # Distribuce se účtuje vždy podle skutečného toku do/ze sítě
+        # (ee_import[t] a ee_export[t] = grid-only proměnné dané bilancí výše).
+        dist_sell_net       = p['dist_ee_sell']
+        dist_buy_net        = p['dist_ee_buy']
         fve_dist_sell_cost  = p['dist_ee_sell'] if (u['fve'] and p.get('fve_dist_sell')) else 0.0
         bess_dist_buy_cost  = p['dist_ee_buy']  * bess_cha[t] if (u['bess'] and p.get('bess_dist_buy'))  else 0
         bess_dist_sell_cost = p['dist_ee_sell'] * bess_dis[t] if (u['bess'] and p.get('bess_dist_sell')) else 0
@@ -1043,8 +1042,8 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         p_ee_ekh = p.get('ek_ee_fix_price',    p_ee_m)  if (u['ek']   and p.get('ek_ee_fix'))   else p_ee_m
 
         fve_ds   = p['dist_ee_sell'] if (u['fve'] and p.get('fve_dist_sell')) else 0.0
-        dist_s   = p['dist_ee_sell'] if not p['internal_ee_use'] else 0.0
-        dist_b   = p['dist_ee_buy']  if not p['internal_ee_use'] else 0.0
+        dist_s   = p['dist_ee_sell']
+        dist_b   = p['dist_ee_buy']
 
         rt  = h_price * res['Dodáno tepla [MW]'].iloc[t]
         re  = (p_ee_m - dist_s - fve_ds) * res['EE export [MW]'].iloc[t]
