@@ -617,6 +617,12 @@ with t_gen:
         p['dist_ee_sell']      = st.number_input("Distribuce prodej EE [€/MWh]",  value=2.0)
         p['gas_dist']          = st.number_input("Distribuce plyn [€/MWh]",        value=5.0)
     with col2:
+        p['internal_ee_use']   = st.checkbox(
+            "Interní spotřeba EE bez distribuce", value=True,
+            help="ON (doporučeno): distribuce se platí jen na skutečně dovezenou EE ze sítě "
+                 "(ee_import → EK). Lokální výroba (KGJ/FVE/BESS) spotřebovaná v EK je bez distribuce. "
+                 "Distribuce na export se neplatí. "
+                 "OFF (legacy): účtuje navíc distribuci na celou spotřebu EK.")
         p['h_price']           = st.number_input("Prodejní cena tepla [€/MWh]",   value=95.0)
         p['h_cover']           = st.slider("Minimální pokrytí poptávky tepla", 0.0, 1.0, 0.99, step=0.01)
         p['shortfall_penalty'] = st.number_input("Penalizace za nedodání tepla [€/MWh]", value=500.0,
@@ -946,10 +952,15 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         ee_ek_in   = q_ek[t] / ek_eff                            if u['ek']  else 0
         model += ee_kgj_out + fve_p + ee_import[t] + bess_dis[t] == ee_ek_in + bess_cha[t] + ee_export[t]
 
-        # Distribuce se účtuje vždy podle skutečného toku do/ze sítě
-        # (ee_import[t] a ee_export[t] = grid-only proměnné dané bilancí výše).
-        dist_sell_net       = p['dist_ee_sell']
+        # Distribuci na export NEÚČTUJEME (prodej do sítě).
+        # Distribuci na import účtujeme vždy – ee_import[t] je grid EE,
+        # která jde do EK (BESS má vlastní flag bess_dist_buy).
+        dist_sell_net       = 0.0
         dist_buy_net        = p['dist_ee_buy']
+        # Přirážka na celkovou spotřebu EK (legacy režim při internal_ee_use=False).
+        # Při internal_ee_use=True (default) = 0, distribuci platíme jen
+        # přes ee_import[t] na skutečně dovezené EE z gridu do EK.
+        dist_ek             = 0.0 if p['internal_ee_use'] else p['dist_ee_buy']
         fve_dist_sell_cost  = p['dist_ee_sell'] if (u['fve'] and p.get('fve_dist_sell')) else 0.0
         bess_dist_buy_cost  = p['dist_ee_buy']  * bess_cha[t] if (u['bess'] and p.get('bess_dist_buy'))  else 0
         bess_dist_sell_cost = p['dist_ee_sell'] * bess_dis[t] if (u['bess'] and p.get('bess_dist_sell')) else 0
@@ -972,7 +983,7 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
             ((p_gas_kgj  + p['gas_dist']) * (c0_th * on[t] + c1_th * q_kgj[t]) if u['kgj'] else 0) +
             ((p_gas_boil + p['gas_dist']) * (q_boil[t] / boil_eff)       if u['boil']     else 0) +
             (p_ee_m + dist_buy_net) * ee_import[t] +
-            ((p_ee_ek + dist_buy_net) * ee_ek_in                          if u['ek']       else 0) +
+            ((p_ee_ek + dist_ek) * ee_ek_in                               if u['ek']       else 0) +
             (p['imp_price'] * q_imp[t]                                    if u['ext_heat'] else 0) +
             (p['k_start_cost'] * start[t]                                 if u['kgj']      else 0) +
             (p.get('k_service_cost', 0.0) * on[t]                            if u['kgj'] else 0) +
@@ -1042,15 +1053,16 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         p_ee_ekh = p.get('ek_ee_fix_price',    p_ee_m)  if (u['ek']   and p.get('ek_ee_fix'))   else p_ee_m
 
         fve_ds   = p['dist_ee_sell'] if (u['fve'] and p.get('fve_dist_sell')) else 0.0
-        dist_s   = p['dist_ee_sell']
+        dist_s   = 0.0
         dist_b   = p['dist_ee_buy']
+        dist_ek  = 0.0 if p['internal_ee_use'] else p['dist_ee_buy']
 
         rt  = h_price * res['Dodáno tepla [MW]'].iloc[t]
         re  = (p_ee_m - dist_s - fve_ds) * res['EE export [MW]'].iloc[t]
         cg1 = (p_gas_kj + p['gas_dist']) * (c0_th * res['KGJ on'].iloc[t] + c1_th * res['KGJ [MW_th]'].iloc[t]) if u['kgj'] else 0
         cg2 = (p_gas_bh + p['gas_dist']) * (res['Kotel [MW_th]'].iloc[t] / boil_eff)      if u['boil'] else 0
         ce1 = (p_ee_m + dist_b) * res['EE import [MW]'].iloc[t]
-        ce2 = (p_ee_ekh + dist_b) * res['EE do EK [MW]'].iloc[t] if u['ek'] else 0
+        ce2 = (p_ee_ekh + dist_ek) * res['EE do EK [MW]'].iloc[t] if u['ek'] else 0
         ci  = p['imp_price'] * res['Import tepla [MW_th]'].iloc[t] if u['ext_heat'] else 0
         cs  = p['k_start_cost'] * vv(start, t) if u['kgj'] else 0
         csv = p.get('k_service_cost', 0.0) * res['KGJ on'].iloc[t] if u['kgj'] else 0
