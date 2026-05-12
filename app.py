@@ -613,9 +613,9 @@ t_gen, t_tech, t_co2 = st.tabs(["Obecné", "Technika", "Emise CO₂"])
 with t_gen:
     col1, col2 = st.columns(2)
     with col1:
-        p['dist_ee_buy']       = st.number_input("Distribuce nákup EE [€/MWh]",   value=33.0)
-        p['dist_ee_sell']      = st.number_input("Distribuce prodej EE [€/MWh]",  value=2.0)
-        p['gas_dist']          = st.number_input("Distribuce plyn [€/MWh]",        value=5.0)
+        p['dist_ee_buy']       = st.number_input("Distribuce nákup EE [€/MWh]",   value=12.0)
+        p['dist_ee_sell']      = st.number_input("Distribuce prodej EE [€/MWh]",  value=0.0)
+        p['gas_dist']          = st.number_input("Distribuce plyn [€/MWh]",        value=10.0)
     with col2:
         p['internal_ee_use']   = st.checkbox(
             "Ušetřit distribuci při interní spotřebě EE", value=True,
