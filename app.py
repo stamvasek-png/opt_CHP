@@ -619,7 +619,7 @@ with t_gen:
     with col2:
         p['internal_ee_use']   = st.checkbox(
             "Ušetřit distribuci při interní spotřebě EE", value=True,
-            help="Pokud spotřebu EE (EK, BESS) pokrývá lokální výroba (KGJ, FVE), distribuci neplatíme.")
+            help="Pokud je zaškrtnuto, solver smí v každé hodině krýt lokální spotřebu (EK, BESS) přímo z lokální výroby (KGJ, FVE, BESS výboj) bez distribuce. Co fyzicky prochází gridem (import/export), platí distribuci vždy. Odškrtnutí vynutí průchod gridem (vše s distribucí).")
         p['h_price']           = st.number_input("Prodejní cena tepla [€/MWh]",   value=95.0)
         p['h_cover']           = st.slider("Minimální pokrytí poptávky tepla", 0.0, 1.0, 0.99, step=0.01)
         p['shortfall_penalty'] = st.number_input("Penalizace za nedodání tepla [€/MWh]", value=500.0,
@@ -708,7 +708,7 @@ with t_tech:
             st.markdown("**Distribuce pro arbitráž**")
             p['bess_dist_buy']  = st.checkbox("Účtovat distribuci NÁKUP do BESS",  value=False)
             p['bess_dist_sell'] = st.checkbox("Účtovat distribuci PRODEJ z BESS",  value=False)
-            st.caption("💡 Interní arbitráž distribuci neplatí při zapnuté volbě 'Ušetřit distribuci'.")
+            st.caption("💡 Běžné sazby `dist_ee_buy/sell` se účtují automaticky jen na grid toky (po refaktoru). Tyto checkboxy přidávají EXTRA poplatek na VEŠKERÉ BESS nabíjení/vybíjení (např. specifická arbitrážní sazba) — sčítají se s běžnou distribucí.")
         p['bess_ee_fix'] = st.checkbox("Fixní cena EE pro BESS")
         if p['bess_ee_fix']:
             p['bess_ee_fix_price'] = st.number_input("Fixní cena EE – BESS [€/MWh]",
@@ -871,6 +871,23 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
     heat_shortfall = pulp.LpVariable.dicts("shortfall",  range(T), 0)
     heat_dump      = pulp.LpVariable.dicts("heat_dump",  range(T), 0)  # přebytečné teplo zahozeno
 
+    # Rozdělení toku EE do EK a do BESS nabíjení podle zdroje (lokální výroba vs. grid).
+    # Lokální větve nepodléhají distribuci; grid větve ano. Když je internal_ee_use vypnut,
+    # jsou lokální větve donuceny na 0 (vše musí fyzicky projít DS).
+    if u['ek']:
+        ee_ek_local = pulp.LpVariable.dicts("ee_ek_local", range(T), 0)
+        ee_ek_grid  = pulp.LpVariable.dicts("ee_ek_grid",  range(T), 0)
+    else:
+        ee_ek_local = {t: 0 for t in range(T)}
+        ee_ek_grid  = {t: 0 for t in range(T)}
+
+    if u['bess']:
+        ee_bess_local = pulp.LpVariable.dicts("ee_bess_local", range(T), 0)
+        ee_bess_grid  = pulp.LpVariable.dicts("ee_bess_grid",  range(T), 0)
+    else:
+        ee_bess_local = {t: 0 for t in range(T)}
+        ee_bess_grid  = {t: 0 for t in range(T)}
+
     # ── KGJ provozní omezení ─────────────────────
     if u['kgj']:
         for t in range(T):
@@ -947,16 +964,34 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
 
         ee_kgj_out = (c0_el * on[t] + c1_el * q_kgj[t]) if u['kgj'] else 0
         ee_ek_in   = q_ek[t] / ek_eff                            if u['ek']  else 0
+        # Hlavní EE bilance (ponechána jako sanity check, je odvoditelná z níže uvedených split rovnic)
         model += ee_kgj_out + fve_p + ee_import[t] + bess_dis[t] == ee_ek_in + bess_cha[t] + ee_export[t]
 
-        dist_sell_net       = p['dist_ee_sell'] if not p['internal_ee_use'] else 0.0
-        dist_buy_net        = p['dist_ee_buy']  if not p['internal_ee_use'] else 0.0
+        # Decomposition: rozdělení toku EE do EK / BESS na lokální a grid složku
+        if u['ek']:
+            model += ee_ek_local[t] + ee_ek_grid[t] == ee_ek_in
+        if u['bess']:
+            model += ee_bess_local[t] + ee_bess_grid[t] == bess_cha[t]
+        # Grid import pokrývá výhradně grid-stranu lokálních spotřebičů
+        model += ee_import[t] == ee_ek_grid[t] + ee_bess_grid[t]
+
+        # Když je checkbox vypnut, žádné interní routování — vše musí přes grid
+        if not p['internal_ee_use']:
+            if u['ek']:
+                model += ee_ek_local[t] == 0
+            if u['bess']:
+                model += ee_bess_local[t] == 0
+
+        # Kontraktní cena EE pro BESS (paralela k p_ee_ek pro EK, aktivuje dosud nepoužitý parametr)
+        p_ee_bess = p.get('bess_ee_fix_price', p_ee_m) if (u['bess'] and p.get('bess_ee_fix')) else p_ee_m
+
+        # Distribuční sazby — vždy aplikovány na grid toky
         fve_dist_sell_cost  = p['dist_ee_sell'] if (u['fve'] and p.get('fve_dist_sell')) else 0.0
         bess_dist_buy_cost  = p['dist_ee_buy']  * bess_cha[t] if (u['bess'] and p.get('bess_dist_buy'))  else 0
         bess_dist_sell_cost = p['dist_ee_sell'] * bess_dis[t] if (u['bess'] and p.get('bess_dist_sell')) else 0
 
         revenue = (h_price * (heat_delivered - heat_dump[t])
-                   + (p_ee_m - dist_sell_net - fve_dist_sell_cost) * ee_export[t])
+                   + (p_ee_m - p['dist_ee_sell'] - fve_dist_sell_cost) * ee_export[t])
         co2_price = p.get('co2_price', 0.0)
         co2_cost = 0
         if co2_price > 0:
@@ -969,11 +1004,16 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
                 co2_grid_factor * ee_import[t] -
                 co2_grid_factor * ee_export[t]
             )
+        # Náklady na EE pro EK / BESS — pouze grid složka platí tržní/kontraktní cenu + distribuci.
+        # Lokální složka má jen opportunity cost (ušlý ee_export).
+        ee_cost_ek_grid   = (p_ee_ek   + p['dist_ee_buy']) * ee_ek_grid[t]   if u['ek']   else 0
+        ee_cost_bess_grid = (p_ee_bess + p['dist_ee_buy']) * ee_bess_grid[t] if u['bess'] else 0
+
         costs = (
             ((p_gas_kgj  + p['gas_dist']) * (c0_th * on[t] + c1_th * q_kgj[t]) if u['kgj'] else 0) +
             ((p_gas_boil + p['gas_dist']) * (q_boil[t] / boil_eff)       if u['boil']     else 0) +
-            (p_ee_m + dist_buy_net) * ee_import[t] +
-            ((p_ee_ek + dist_buy_net) * ee_ek_in                          if u['ek']       else 0) +
+            ee_cost_ek_grid +
+            ee_cost_bess_grid +
             (p['imp_price'] * q_imp[t]                                    if u['ext_heat'] else 0) +
             (p['k_start_cost'] * start[t]                                 if u['kgj']      else 0) +
             (p.get('k_service_cost', 0.0) * on[t]                            if u['kgj'] else 0) +
@@ -1012,6 +1052,10 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         'EE z KGJ [MW]':        [(c0_el * vv(on, t) + c1_el * vv(q_kgj, t)) if u['kgj'] else 0.0 for t in range(T)],
         'EE z FVE [MW]':        [float(df['FVE (MW)'].iloc[t]) if (u['fve'] and 'FVE (MW)' in df.columns) else 0.0 for t in range(T)],
         'EE do EK [MW]':        [vv(q_ek, t)/ek_eff if u['ek'] else 0.0 for t in range(T)],
+        'EE do EK lokál [MW]':  [vv(ee_ek_local, t) for t in range(T)],
+        'EE do EK grid [MW]':   [vv(ee_ek_grid,  t) for t in range(T)],
+        'EE do BESS lokál [MW]':[vv(ee_bess_local, t) for t in range(T)],
+        'EE do BESS grid [MW]': [vv(ee_bess_grid,  t) for t in range(T)],
         'Cena EE [€/MWh]':     (df['ee_price'] + ee_delta).values,
         'Cena plyn [€/MWh]':   (df['gas_price'] + gas_delta).values,
         'KGJ on':               [vv(on, t) for t in range(T)],
@@ -1041,17 +1085,19 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         p_gas_kj = p.get('kgj_gas_fix_price',  p_gas_m) if (u['kgj']  and p.get('kgj_gas_fix'))  else p_gas_m
         p_gas_bh = p.get('boil_gas_fix_price', p_gas_m) if (u['boil'] and p.get('boil_gas_fix')) else p_gas_m
         p_ee_ekh = p.get('ek_ee_fix_price',    p_ee_m)  if (u['ek']   and p.get('ek_ee_fix'))   else p_ee_m
+        p_ee_bessh = p.get('bess_ee_fix_price', p_ee_m) if (u['bess'] and p.get('bess_ee_fix')) else p_ee_m
 
         fve_ds   = p['dist_ee_sell'] if (u['fve'] and p.get('fve_dist_sell')) else 0.0
-        dist_s   = p['dist_ee_sell'] if not p['internal_ee_use'] else 0.0
-        dist_b   = p['dist_ee_buy']  if not p['internal_ee_use'] else 0.0
 
         rt  = h_price * res['Dodáno tepla [MW]'].iloc[t]
-        re  = (p_ee_m - dist_s - fve_ds) * res['EE export [MW]'].iloc[t]
+        re  = (p_ee_m - p['dist_ee_sell'] - fve_ds) * res['EE export [MW]'].iloc[t]
         cg1 = (p_gas_kj + p['gas_dist']) * (c0_th * res['KGJ on'].iloc[t] + c1_th * res['KGJ [MW_th]'].iloc[t]) if u['kgj'] else 0
         cg2 = (p_gas_bh + p['gas_dist']) * (res['Kotel [MW_th]'].iloc[t] / boil_eff)      if u['boil'] else 0
-        ce1 = (p_ee_m + dist_b) * res['EE import [MW]'].iloc[t]
-        ce2 = (p_ee_ekh + dist_b) * res['EE do EK [MW]'].iloc[t] if u['ek'] else 0
+        # Náklady EE — split podle cíle: grid→EK + grid→BESS (každý se svou kontraktní/tržní cenou + distribucí).
+        # Lokální složka má jen opportunity cost (ušlý export), nevstupuje sem.
+        ce1 = ((p_ee_ekh   + p['dist_ee_buy']) * res['EE do EK grid [MW]'].iloc[t]   if u['ek']   else 0) \
+            + ((p_ee_bessh + p['dist_ee_buy']) * res['EE do BESS grid [MW]'].iloc[t] if u['bess'] else 0)
+        ce2 = 0
         ci  = p['imp_price'] * res['Import tepla [MW_th]'].iloc[t] if u['ext_heat'] else 0
         cs  = p['k_start_cost'] * vv(start, t) if u['kgj'] else 0
         csv = p.get('k_service_cost', 0.0) * res['KGJ on'].iloc[t] if u['kgj'] else 0
