@@ -633,27 +633,16 @@ with t_tech:
         with c1:
             p['k_th']          = st.number_input("Jmenovitý tepelný výkon [MW]",  value=0.605)
             p['k_eff_th']      = st.number_input("Tepelná účinnost η_th [-]",      value=0.531)
-            p['k_el_manual']   = st.checkbox(
-                "Zadat el. výkon ručně", value=False,
-                help="Pokud zaškrtnuto, zadáš el. výkon přímo a η_el se dopočítá. Jinak zadáš η_el a el. výkon se odvodí.")
-            if p['k_el_manual']:
-                p['k_el']      = st.number_input("Jmenovitý el. výkon [MW]", value=0.450,
-                    min_value=0.001, step=0.001, format="%.3f")
-                p['k_eff_el']  = p['k_el'] * p['k_eff_th'] / p['k_th'] if p['k_th'] > 0 else 0.0
-            else:
-                p['k_eff_el']  = st.number_input("Elektrická účinnost η_el [-]",   value=0.395)
-                p['k_el']      = p['k_th'] * (p['k_eff_el'] / p['k_eff_th']) if p['k_eff_th'] > 0 else 0.0
+            p['k_eff_el']      = st.number_input("Elektrická účinnost η_el [-]",   value=0.395)
             p['k_min']         = st.slider("Min. zatížení [%]", 0, 100, 50) / 100
         with c2:
             p['k_start_cost']  = st.number_input("Náklady na start [€/start]",    value=150.0)
             p['k_min_runtime'] = st.number_input("Min. doba běhu [hod]",          value=4, min_value=1)
             p['k_service_cost']= st.number_input("Servisní náklad [€/h provozu]", value=14.0)
-        if p['k_el_manual']:
-            st.caption(f"ℹ️ Dopočtená el. účinnost: **η_el = {p['k_eff_el']:.3f}** | "
-                       f"Celková účinnost: **{p['k_eff_th']+p['k_eff_el']:.2f}**")
-        else:
-            st.caption(f"ℹ️ Odvozený el. výkon: **{p['k_el']:.3f} MW** | "
-                       f"Celková účinnost: **{p['k_eff_th']+p['k_eff_el']:.2f}**")
+        k_el_derived = p['k_th'] * (p['k_eff_el'] / p['k_eff_th'])
+        p['k_el'] = k_el_derived
+        st.caption(f"ℹ️ Odvozený el. výkon: **{k_el_derived:.3f} MW** | "
+                   f"Celková účinnost: **{p['k_eff_th']+p['k_eff_el']:.2f}**")
         # Roční limit hodin
         p['kgj_hour_limit_on'] = st.checkbox("Omezit max. počet provozních hodin KGJ / rok", value=False)
         if p['kgj_hour_limit_on']:
