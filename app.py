@@ -297,7 +297,103 @@ def _write_sheet(writer, df, sheet_name, hdr_fmt, num_fmt, txt_fmt):
         ws.write(0, col_idx, col_name, hdr_fmt)
 
 
-def to_excel_scenarios(scenarios):
+def build_parameters_df(params, uses):
+    """Sestaví přehled použitých zdrojů a parametrů (po komponentách)."""
+    if params is None:
+        return pd.DataFrame(columns=['Kategorie', 'Parametr', 'Hodnota'])
+    p = params
+    u = uses or {}
+    rows = []
+
+    def add(cat, name, val):
+        rows.append({'Kategorie': cat, 'Parametr': name, 'Hodnota': val})
+
+    # Ekonomika
+    add('Ekonomika', 'Distribuce EE – nákup [€/MWh]', p.get('dist_ee_buy', 0))
+    add('Ekonomika', 'Distribuce EE – prodej [€/MWh]', p.get('dist_ee_sell', 0))
+    add('Ekonomika', 'Distribuce plyn – nákup [€/MWh]', p.get('gas_dist', 0))
+    add('Ekonomika', 'Prodejní cena tepla [€/MWh]', p.get('h_price', 0))
+    add('Ekonomika', 'Min. pokrytí poptávky tepla [-]', p.get('h_cover', 0))
+    add('Ekonomika', 'Penalizace za nedodání tepla [€/MWh]', p.get('shortfall_penalty', 0))
+    add('Ekonomika', 'Ušetřit distribuci při interní spotřebě EE',
+        'ANO' if p.get('internal_ee_use') else 'NE')
+
+    # KGJ
+    if u.get('kgj'):
+        add('KGJ', 'Jmenovitý tepelný výkon [MW]', p.get('k_th', 0))
+        add('KGJ', 'Odvozený el. výkon [MW]', round(p.get('k_el', 0), 4))
+        add('KGJ', 'Tepelná účinnost η_th [-]', p.get('k_eff_th', 0))
+        add('KGJ', 'Elektrická účinnost η_el [-]', p.get('k_eff_el', 0))
+        add('KGJ', 'Celková účinnost [-]', round(p.get('k_eff_th', 0) + p.get('k_eff_el', 0), 3))
+        add('KGJ', 'Min. zatížení [%]', round(p.get('k_min', 0) * 100, 1))
+        add('KGJ', 'Náklady na start [€/start]', p.get('k_start_cost', 0))
+        add('KGJ', 'Min. doba běhu [hod]', p.get('k_min_runtime', 0))
+        add('KGJ', 'Servisní náklad [€/h provozu]', p.get('k_service_cost', 0))
+        if p.get('kgj_var_eff'):
+            add('KGJ', 'η_th při min. zátěži [-]', p.get('eta_th_min', '–'))
+            add('KGJ', 'η_el při min. zátěži [-]', p.get('eta_el_min', '–'))
+        if p.get('kgj_hour_limit_on'):
+            add('KGJ', 'Max. hodin provozu / rok', p.get('kgj_hour_limit', '–'))
+        if p.get('kgj_gas_fix'):
+            add('KGJ', 'Fixní cena plynu [€/MWh]', p.get('kgj_gas_fix_price', '–'))
+
+    # Plynový kotel
+    if u.get('boil'):
+        add('Plynový kotel', 'Max. výkon [MW]', p.get('b_max', 0))
+        add('Plynový kotel', 'Účinnost [-]', p.get('boil_eff', 0))
+        if p.get('boil_hour_limit_on'):
+            add('Plynový kotel', 'Max. hodin provozu / rok', p.get('boil_hour_limit', '–'))
+        if p.get('boil_gas_fix'):
+            add('Plynový kotel', 'Fixní cena plynu [€/MWh]', p.get('boil_gas_fix_price', '–'))
+
+    # Elektrokotel
+    if u.get('ek'):
+        add('Elektrokotel', 'Max. výkon [MW]', p.get('ek_max', 0))
+        add('Elektrokotel', 'Účinnost [-]', p.get('ek_eff', 0))
+        if p.get('ek_ee_fix'):
+            add('Elektrokotel', 'Fixní cena EE [€/MWh]', p.get('ek_ee_fix_price', '–'))
+
+    # TES
+    if u.get('tes'):
+        add('TES (nádrž)', 'Kapacita [MWh]', p.get('tes_cap', 0))
+        add('TES (nádrž)', 'Ztráta [%/h]', round(p.get('tes_loss', 0) * 100, 3))
+
+    # BESS
+    if u.get('bess'):
+        add('BESS (baterie)', 'Kapacita [MWh]', p.get('bess_cap', 0))
+        add('BESS (baterie)', 'Max. výkon [MW]', p.get('bess_p', 0))
+        add('BESS (baterie)', 'Účinnost nab/vyb [-]', p.get('bess_eff', 0))
+        add('BESS (baterie)', 'Náklady na opotřebení [€/MWh]', p.get('bess_cycle_cost', 0))
+        add('BESS (baterie)', 'Účtovat distribuci NÁKUP do BESS',
+            'ANO' if p.get('bess_dist_buy') else 'NE')
+        add('BESS (baterie)', 'Účtovat distribuci PRODEJ z BESS',
+            'ANO' if p.get('bess_dist_sell') else 'NE')
+        if p.get('bess_ee_fix'):
+            add('BESS (baterie)', 'Fixní cena EE [€/MWh]', p.get('bess_ee_fix_price', '–'))
+
+    # FVE
+    if u.get('fve'):
+        add('FVE', 'Instalovaný výkon [MW]', p.get('fve_installed_p', 0))
+        add('FVE', 'Účtovat distribuci PRODEJ z FVE',
+            'ANO' if p.get('fve_dist_sell') else 'NE')
+
+    # Import tepla
+    if u.get('ext_heat'):
+        add('Import tepla', 'Max. výkon [MW]', p.get('imp_max', 0))
+        add('Import tepla', 'Cena importu [€/MWh]', p.get('imp_price', 0))
+        if p.get('imp_hour_limit_on'):
+            add('Import tepla', 'Max. hodin / rok', p.get('imp_hour_limit', '–'))
+
+    # CO2
+    if p.get('co2_price', 0) > 0 or p.get('co2_gas_factor') or p.get('co2_grid_factor'):
+        add('CO₂', 'Cena CO₂ [€/tCO₂]', p.get('co2_price', 0))
+        add('CO₂', 'Emisní faktor plynu [tCO₂/MWh]', p.get('co2_gas_factor', 0))
+        add('CO₂', 'Emisní faktor sítě [tCO₂/MWh]', p.get('co2_grid_factor', 0))
+
+    return pd.DataFrame(rows)
+
+
+def to_excel_scenarios(scenarios, params=None, uses=None):
     """Excel export pro scenáristickou analýzu."""
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
@@ -338,10 +434,15 @@ def to_excel_scenarios(scenarios):
             sheet = profile.upper()[:31]
             _write_sheet(writer, df_exp, sheet, hdr_fmt, num_fmt, txt_fmt)
 
+        # List: Parametry
+        params_df = build_parameters_df(params, uses)
+        if not params_df.empty:
+            _write_sheet(writer, params_df, 'Parametry', hdr_fmt, num_fmt, txt_fmt)
+
     return buf.getvalue()
 
 
-def to_excel_monthly(monthly_pr, month_names):
+def to_excel_monthly(monthly_pr, month_names, params=None, uses=None):
     """Excel export pro měsíční analýzu profilů."""
     buf = io.BytesIO()
     months_sorted  = sorted(monthly_pr.keys())
@@ -401,10 +502,15 @@ def to_excel_monthly(monthly_pr, month_names):
             matrix_pph.append(row)
         _write_sheet(writer, pd.DataFrame(matrix_pph), 'Matice zisk_hod [€/h]', hdr_fmt, num_fmt, txt_fmt)
 
+        # List: Parametry
+        params_df = build_parameters_df(params, uses)
+        if not params_df.empty:
+            _write_sheet(writer, params_df, 'Parametry', hdr_fmt, num_fmt, txt_fmt)
+
     return buf.getvalue()
 
 
-def to_excel_sensitivity(sa_df, profile_name, gas_range, ee_range, steps):
+def to_excel_sensitivity(sa_df, profile_name, gas_range, ee_range, steps, params=None, uses=None):
     """Excel export pro citlivostní analýzu."""
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
@@ -426,6 +532,11 @@ def to_excel_sensitivity(sa_df, profile_name, gas_range, ee_range, steps):
             {'Parametr': 'Počet kroků', 'Hodnota': steps},
         ])
         _write_sheet(writer, meta_df, 'Parametry analýzy', hdr_fmt, num_fmt, txt_fmt)
+
+        # List: Parametry modelu (zdroje, výkony, účinnosti, ceny)
+        params_df = build_parameters_df(params, uses)
+        if not params_df.empty:
+            _write_sheet(writer, params_df, 'Parametry modelu', hdr_fmt, num_fmt, txt_fmt)
 
     return buf.getvalue()
 
@@ -1471,7 +1582,7 @@ if st.session_state.monthly_profile_results is not None:
     # ── Download měsíční analýzy ──
     if st.button("📦 Připravit Excel měsíční analýzy ke stažení", key="prep_monthly"):
         with st.spinner("⏳ Generuji Excel …"):
-            st.session_state['_xlsx_monthly'] = to_excel_monthly(monthly_pr, MONTH_NAMES)
+            st.session_state['_xlsx_monthly'] = to_excel_monthly(monthly_pr, MONTH_NAMES, params=p, uses=uses)
     if st.session_state.get('_xlsx_monthly') is not None:
         st.download_button(
             label="📥 Stáhnout měsíční analýzu (Excel)",
@@ -1611,6 +1722,9 @@ if st.session_state.monthly_profile_results is not None:
             workbook_ap = writer_ap.book
             hdr_ap, num_ap, txt_ap, _ = _wb_formats(workbook_ap)
             _write_sheet(writer_ap, df_ap_exp, 'Kombinovaný plán', hdr_ap, num_ap, txt_ap)
+            params_df_ap = build_parameters_df(p, uses)
+            if not params_df_ap.empty:
+                _write_sheet(writer_ap, params_df_ap, 'Parametry', hdr_ap, num_ap, txt_ap)
         st.download_button(
             label="📥 Stáhnout kombinovaný roční plán (Excel)",
             data=buf_ap.getvalue(),
@@ -1953,7 +2067,7 @@ if st.session_state.scenario_results is not None:
     st.divider()
     if st.button("📦 Připravit Excel scénářů ke stažení", key="prep_scenarios"):
         with st.spinner("⏳ Generuji Excel …"):
-            st.session_state['_xlsx_scen'] = to_excel_scenarios(scenarios)
+            st.session_state['_xlsx_scen'] = to_excel_scenarios(scenarios, params=p, uses=uses)
     if st.session_state.get('_xlsx_scen') is not None:
         st.download_button(
             label="📥 Stáhnout scénáře (Excel)",
@@ -2053,7 +2167,8 @@ if st.session_state.scenario_results is not None:
                     profile_name=sa_profile,
                     gas_range=sa_gas_range,
                     ee_range=sa_ee_range,
-                    steps=sa_steps
+                    steps=sa_steps,
+                    params=p, uses=uses
                 )
         if st.session_state.get('_xlsx_sa') is not None:
             st.download_button(
