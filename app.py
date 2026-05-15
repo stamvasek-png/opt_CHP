@@ -336,6 +336,11 @@ def build_parameters_df(params, uses):
             add('KGJ', 'Max. hodin provozu / rok', p.get('kgj_hour_limit', '–'))
         if p.get('kgj_gas_fix'):
             add('KGJ', 'Fixní cena plynu [€/MWh]', p.get('kgj_gas_fix_price', '–'))
+        # Fixní výkupní cena EE per profil — pouze zapnuté checkboxy
+        for prof in ('base', 'peak', 'extpeak', 'offpeak'):
+            if p.get(f'kgj_ee_fix_{prof}'):
+                add('KGJ', f'Fixní výkupní cena EE — {prof.upper()} [€/MWh]',
+                    p.get(f'kgj_ee_fix_price_{prof}', '–'))
 
     # Plynový kotel
     if u.get('boil'):
@@ -762,6 +767,28 @@ with t_tech:
         if p['kgj_gas_fix']:
             p['kgj_gas_fix_price'] = st.number_input("Fixní cena plynu – KGJ [€/MWh]",
                 value=40.0)
+        # Fixní výkupní cena EE z KGJ — per profil (PPA / POZE zelený bonus)
+        st.markdown("**Fixní výkupní cena EE z KGJ (per profil)**")
+        st.caption("PPA / POZE zelený bonus — pro každý profil samostatná smluvní cena. Pokud není zaškrtnuto, použije se spotová cena z nahrané křivky.")
+        col_fp1, col_fp2 = st.columns(2)
+        with col_fp1:
+            p['kgj_ee_fix_base'] = st.checkbox("Fix cena – BASE", value=False, key="cb_kgj_fix_base")
+            if p['kgj_ee_fix_base']:
+                p['kgj_ee_fix_price_base'] = st.number_input("BASE cena [€/MWh]",
+                    value=106.0, key="ni_kgj_fix_base")
+            p['kgj_ee_fix_peak'] = st.checkbox("Fix cena – PEAK", value=False, key="cb_kgj_fix_peak")
+            if p['kgj_ee_fix_peak']:
+                p['kgj_ee_fix_price_peak'] = st.number_input("PEAK cena [€/MWh]",
+                    value=130.0, key="ni_kgj_fix_peak")
+        with col_fp2:
+            p['kgj_ee_fix_extpeak'] = st.checkbox("Fix cena – EXTPEAK", value=False, key="cb_kgj_fix_extpeak")
+            if p['kgj_ee_fix_extpeak']:
+                p['kgj_ee_fix_price_extpeak'] = st.number_input("EXTPEAK cena [€/MWh]",
+                    value=150.0, key="ni_kgj_fix_extpeak")
+            p['kgj_ee_fix_offpeak'] = st.checkbox("Fix cena – OFFPEAK", value=False, key="cb_kgj_fix_offpeak")
+            if p['kgj_ee_fix_offpeak']:
+                p['kgj_ee_fix_price_offpeak'] = st.number_input("OFFPEAK cena [€/MWh]",
+                    value=80.0, key="ni_kgj_fix_offpeak")
         # Proměnná účinnost dle výkonu
         p['kgj_var_eff'] = st.checkbox("Proměnná účinnost dle výkonu", value=False,
             help="Linearizovaná 2-bodová křivka: účinnost při min. zátěži vs. jmenovitém výkonu")
@@ -888,6 +915,21 @@ def compute_linear_fuel_params(k_th, k_min, eta_th_rated, eta_th_min, eta_el_rat
     c0_el = ee_min - c1_el * q_min
 
     return c0_th, c1_th, c0_el, c1_el
+
+
+def get_kgj_fix_price(p, profile_type):
+    """Vrátí (is_active, price) — fixní výkupní cena KGJ pro daný profil.
+
+    Pro profily 'free' a 'custom' fix neexistuje (vždy spot cena z křivky).
+    Pro BASE/PEAK/EXTPEAK/OFFPEAK se vrátí (True, price) pokud je checkbox zapnutý.
+    """
+    if profile_type in ('free', 'custom'):
+        return False, None
+    flag_key = f'kgj_ee_fix_{profile_type}'
+    price_key = f'kgj_ee_fix_price_{profile_type}'
+    if p.get(flag_key):
+        return True, p.get(price_key)
+    return False, None
 
 
 # ────────────────────────────────────────────────
@@ -1051,6 +1093,9 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         if p.get('imp_hour_limit_on') and p.get('imp_hour_limit'):
             model += pulp.lpSum(on_imp[t] for t in range(T)) <= p['imp_hour_limit']
 
+    # Fixní výkupní cena EE z KGJ — vázaná na běžící profil
+    kgj_fix_active, kgj_fix_price = get_kgj_fix_price(p, profile_type)
+
     # ── Hlavní smyčka ─────────────────────────────
     obj = []
     for t in range(T):
@@ -1101,8 +1146,13 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         bess_dist_buy_cost  = p['dist_ee_buy']  * bess_cha[t] if (u['bess'] and p.get('bess_dist_buy'))  else 0
         bess_dist_sell_cost = p['dist_ee_sell'] * bess_dis[t] if (u['bess'] and p.get('bess_dist_sell')) else 0
 
+        # Green bonus: KGJ fixní výkupní cena per profil → bonus = (fix - spot) × ee_kgj_out
+        # Když fix vypnutý / FREE / CUSTOM: bonus = 0 (žádný dopad).
+        kgj_ee_bonus = (kgj_fix_price - p_ee_m) * ee_kgj_out if (u['kgj'] and kgj_fix_active) else 0
+
         revenue = (h_price * (heat_delivered - heat_dump[t])
-                   + (p_ee_m - p['dist_ee_sell'] - fve_dist_sell_cost) * ee_export[t])
+                   + (p_ee_m - p['dist_ee_sell'] - fve_dist_sell_cost) * ee_export[t]
+                   + kgj_ee_bonus)
         co2_price = p.get('co2_price', 0.0)
         co2_cost = 0
         if co2_price > 0:
@@ -1168,6 +1218,11 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         'EE do BESS lokál [MW]':[vv(ee_bess_local, t) for t in range(T)],
         'EE do BESS grid [MW]': [vv(ee_bess_grid,  t) for t in range(T)],
         'Cena EE [€/MWh]':     (df['ee_price'] + ee_delta).values,
+        'Cena výkupu EE z KGJ [€/MWh]': [
+            kgj_fix_price if (u['kgj'] and kgj_fix_active)
+                          else float(df['ee_price'].iloc[t]) + ee_delta
+            for t in range(T)
+        ],
         'Cena plyn [€/MWh]':   (df['gas_price'] + gas_delta).values,
         'KGJ on':               [vv(on, t) for t in range(T)],
         'Kotel on':             [vv(on_boil, t) for t in range(T)],
@@ -1201,7 +1256,10 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         fve_ds   = p['dist_ee_sell'] if (u['fve'] and p.get('fve_dist_sell')) else 0.0
 
         rt  = h_price * res['Dodáno tepla [MW]'].iloc[t]
-        re  = (p_ee_m - p['dist_ee_sell'] - fve_ds) * res['EE export [MW]'].iloc[t]
+        # Green bonus pro KGJ fix cenu (per profil) — promítne se do hodinového Rev EE
+        kgj_bonus_h = (kgj_fix_price - p_ee_m) * res['EE z KGJ [MW]'].iloc[t] if (u['kgj'] and kgj_fix_active) else 0
+        re  = ((p_ee_m - p['dist_ee_sell'] - fve_ds) * res['EE export [MW]'].iloc[t]
+              + kgj_bonus_h)
         cg1 = (p_gas_kj + p['gas_dist']) * (c0_th * res['KGJ on'].iloc[t] + c1_th * res['KGJ [MW_th]'].iloc[t]) if u['kgj'] else 0
         cg2 = (p_gas_bh + p['gas_dist']) * (res['Kotel [MW_th]'].iloc[t] / boil_eff)      if u['boil'] else 0
         # Náklady EE — split podle cíle: grid→EK + grid→BESS (každý se svou kontraktní/tržní cenou + distribucí).
