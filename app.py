@@ -63,6 +63,7 @@ PROFILE_COLORS = {
     'peak':    '#FF9800',  # oranžová
     'extpeak': '#F44336',  # červená
     'offpeak': '#9C27B0',  # fialová
+    'special': '#00BCD4',  # tyrkysová
     'custom':  '#607D8B',  # šedá
 }
 
@@ -170,6 +171,14 @@ def is_business_day(ts) -> bool:
 # SCHEDULING PROFILES & SCENARIO MANAGEMENT
 # ════════════════════════════════════════════════════════════════════
 
+# SPECIAL profil — týdenní okna v rámci 168h týdne (idx = weekday*24 + hour)
+# Měsíce 1,2,3,4,5,9,10,11,12: blok Po 06:00 → Pá 22:00 + So 06:00 → Ne 22:00 (152h/týden)
+# Měsíce 6,7,8 (léto):         blok Po 06:00 → Čt 22:00                       (88h/týden)
+SPECIAL_ON_OTHER  = set(range(6, 118)) | set(range(126, 166))
+SPECIAL_ON_SUMMER = set(range(6, 94))
+SPECIAL_SUMMER_MONTHS = {6, 7, 8}
+
+
 def create_profile_constraints(df, profile_type, custom_hours=None):
     """
     Vytvoří constrainty pro KGJ provoz dle profilu.
@@ -180,6 +189,9 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
       EXTPEAK – po–pá (mimo CZ státní svátky), 6:00–22:00  (hodiny 6..21, 16 h)
       OFFPEAK – doplněk peaku v rámci 24/7: víkendy a svátky celý den
                 + po–pá hodiny 0..7 a 20..23
+      SPECIAL – měsíční vzor s denním rytmem (CZ svátky se neuplatňují):
+                · 1-5, 9-12: Po 06 → Pá 22 + So 06 → Ne 22 (152 h/týden)
+                · 6-8 (léto): Po 06 → Čt 22                 (88 h/týden)
     """
     df_work = df.copy()
     dt = pd.to_datetime(df_work['datetime'])
@@ -201,6 +213,16 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
     elif profile_type == 'offpeak':
         constraints = [0 if ((not bd) or h < 8 or h >= 20) else -1
                        for h, bd in zip(hours, bdays)]
+
+    elif profile_type == 'special':
+        months = dt.dt.month.values
+        weekdays = dt.dt.weekday.values
+        week_idx = weekdays * 24 + hours
+        constraints = [
+            0 if wi in (SPECIAL_ON_SUMMER if m in SPECIAL_SUMMER_MONTHS else SPECIAL_ON_OTHER)
+            else -1
+            for m, wi in zip(months, week_idx)
+        ]
 
     elif profile_type == 'custom' and custom_hours:
         constraints = [0 if h in custom_hours else -1 for h in hours]
@@ -389,7 +411,7 @@ def build_parameters_df(params, uses):
         if p.get('kgj_gas_fix'):
             add('KGJ', 'Fixní cena plynu [€/MWh]', p.get('kgj_gas_fix_price', '–'))
         # Fixní výkupní cena EE per profil — pouze zapnuté checkboxy
-        for prof in ('base', 'peak', 'extpeak', 'offpeak'):
+        for prof in ('base', 'peak', 'extpeak', 'offpeak', 'special'):
             if p.get(f'kgj_ee_fix_{prof}'):
                 add('KGJ', f'Fixní výkupní cena EE — {prof.upper()} [€/MWh]',
                     p.get(f'kgj_ee_fix_price_{prof}', '–'))
@@ -686,7 +708,7 @@ with st.sidebar:
     
     profiles_to_run = st.multiselect(
         "Které profily testovat?",
-        options=['free', 'base', 'peak', 'extpeak', 'offpeak', 'custom'],
+        options=['free', 'base', 'peak', 'extpeak', 'offpeak', 'special', 'custom'],
         default=['free', 'base', 'peak', 'extpeak', 'offpeak'],
         help="Spusť optimalizaci pro vybrané profily a porovnej je"
     )
@@ -709,6 +731,7 @@ with st.sidebar:
         'peak':    {'name': 'Peak (Po-Pá 8-20h)',          'hours': list(range(8, 20)),                      'desc': '12 h × pracovní dny (mimo svátky)'},
         'extpeak': {'name': 'ExtPeak (Po-Pá 6-22h)',       'hours': list(range(6, 22)),                      'desc': '16 h × pracovní dny (mimo svátky)'},
         'offpeak': {'name': 'Offpeak (víkendy+svátky+noc)', 'hours': list(range(0, 8)) + list(range(20, 24)), 'desc': 'Víkendy/svátky 24 h + Po-Pá 20-8 h'},
+        'special': {'name': 'Special (měsíční)',           'hours': None,                                    'desc': 'I-V,IX-XII: Po06→Pá22 + So06→Ne22 | VI-VIII: Po06→Čt22'},
     }
     
     custom_hours = None
@@ -852,6 +875,10 @@ with t_tech:
             if p['kgj_ee_fix_offpeak']:
                 p['kgj_ee_fix_price_offpeak'] = st.number_input("OFFPEAK cena [€/MWh]",
                     value=80.0, key="ni_kgj_fix_offpeak")
+            p['kgj_ee_fix_special'] = st.checkbox("Fix cena – SPECIAL", value=False, key="cb_kgj_fix_special")
+            if p['kgj_ee_fix_special']:
+                p['kgj_ee_fix_price_special'] = st.number_input("SPECIAL cena [€/MWh]",
+                    value=105.0, key="ni_kgj_fix_special")
         # Proměnná účinnost dle výkonu
         p['kgj_var_eff'] = st.checkbox("Proměnná účinnost dle výkonu", value=False,
             help="Linearizovaná 2-bodová křivka: účinnost při min. zátěži vs. jmenovitém výkonu")
