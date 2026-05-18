@@ -122,6 +122,50 @@ st.title("🚀 KGJ Strategy & Dispatch Optimizer PRO")
 MONTH_NAMES = {1:'Led',2:'Úno',3:'Bře',4:'Dub',5:'Kvě',6:'Čvn',
                7:'Čvc',8:'Srp',9:'Zář',10:'Říj',11:'Lis',12:'Pro'}
 
+# ── České státní svátky 2026-2030 (zákon č. 245/2000 Sb.) ─────────────
+# Pevné svátky + Velký pátek a Velikonoční pondělí podle data Velikonoc.
+import datetime as _dt
+CZ_HOLIDAYS = {
+    # 2026
+    _dt.date(2026, 1, 1),   _dt.date(2026, 4, 3),   _dt.date(2026, 4, 6),
+    _dt.date(2026, 5, 1),   _dt.date(2026, 5, 8),   _dt.date(2026, 7, 5),
+    _dt.date(2026, 7, 6),   _dt.date(2026, 9, 28),  _dt.date(2026, 10, 28),
+    _dt.date(2026, 11, 17), _dt.date(2026, 12, 24), _dt.date(2026, 12, 25),
+    _dt.date(2026, 12, 26),
+    # 2027
+    _dt.date(2027, 1, 1),   _dt.date(2027, 3, 26),  _dt.date(2027, 3, 29),
+    _dt.date(2027, 5, 1),   _dt.date(2027, 5, 8),   _dt.date(2027, 7, 5),
+    _dt.date(2027, 7, 6),   _dt.date(2027, 9, 28),  _dt.date(2027, 10, 28),
+    _dt.date(2027, 11, 17), _dt.date(2027, 12, 24), _dt.date(2027, 12, 25),
+    _dt.date(2027, 12, 26),
+    # 2028
+    _dt.date(2028, 1, 1),   _dt.date(2028, 4, 14),  _dt.date(2028, 4, 17),
+    _dt.date(2028, 5, 1),   _dt.date(2028, 5, 8),   _dt.date(2028, 7, 5),
+    _dt.date(2028, 7, 6),   _dt.date(2028, 9, 28),  _dt.date(2028, 10, 28),
+    _dt.date(2028, 11, 17), _dt.date(2028, 12, 24), _dt.date(2028, 12, 25),
+    _dt.date(2028, 12, 26),
+    # 2029
+    _dt.date(2029, 1, 1),   _dt.date(2029, 3, 30),  _dt.date(2029, 4, 2),
+    _dt.date(2029, 5, 1),   _dt.date(2029, 5, 8),   _dt.date(2029, 7, 5),
+    _dt.date(2029, 7, 6),   _dt.date(2029, 9, 28),  _dt.date(2029, 10, 28),
+    _dt.date(2029, 11, 17), _dt.date(2029, 12, 24), _dt.date(2029, 12, 25),
+    _dt.date(2029, 12, 26),
+    # 2030
+    _dt.date(2030, 1, 1),   _dt.date(2030, 4, 19),  _dt.date(2030, 4, 22),
+    _dt.date(2030, 5, 1),   _dt.date(2030, 5, 8),   _dt.date(2030, 7, 5),
+    _dt.date(2030, 7, 6),   _dt.date(2030, 9, 28),  _dt.date(2030, 10, 28),
+    _dt.date(2030, 11, 17), _dt.date(2030, 12, 24), _dt.date(2030, 12, 25),
+    _dt.date(2030, 12, 26),
+}
+CZ_HOLIDAYS_COVERED_YEARS = (2026, 2030)
+
+
+def is_business_day(ts) -> bool:
+    """True = pracovní den po–pá, který NENÍ státní svátek (CZ)."""
+    ts = pd.Timestamp(ts)
+    return ts.weekday() < 5 and ts.date() not in CZ_HOLIDAYS
+
+
 # ════════════════════════════════════════════════════════════════════
 # SCHEDULING PROFILES & SCENARIO MANAGEMENT
 # ════════════════════════════════════════════════════════════════════
@@ -130,28 +174,36 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
     """
     Vytvoří constrainty pro KGJ provoz dle profilu.
     Returns: list[int]  -1 = must OFF, 0 = free, 1 = must ON (baseload)
+
+    Konvence (PXE/OTE + provozní úprava pro KGJ):
+      PEAK    – po–pá (mimo CZ státní svátky), 8:00–20:00  (hodiny 8..19, 12 h)
+      EXTPEAK – po–pá (mimo CZ státní svátky), 6:00–22:00  (hodiny 6..21, 16 h)
+      OFFPEAK – doplněk peaku v rámci 24/7: víkendy a svátky celý den
+                + po–pá hodiny 0..7 a 20..23
     """
     df_work = df.copy()
-    df_work['hour'] = pd.to_datetime(df_work['datetime']).dt.hour
+    dt = pd.to_datetime(df_work['datetime'])
+    hours = dt.dt.hour.values
+    bdays = dt.apply(is_business_day).values
 
     if profile_type == 'base':
         # BASE = baseload: KGJ jede 24/7, všechny sloty vynuceny ON
         constraints = [1] * len(df_work)
 
     elif profile_type == 'peak':
-        # Peak hodiny 9-21
-        constraints = [0 if h in range(9, 22) else -1 for h in df_work['hour']]
+        constraints = [0 if (bd and 8 <= h < 20) else -1
+                       for h, bd in zip(hours, bdays)]
 
     elif profile_type == 'extpeak':
-        # Extended Peak 6-22
-        constraints = [0 if h in range(6, 23) else -1 for h in df_work['hour']]
+        constraints = [0 if (bd and 6 <= h < 22) else -1
+                       for h, bd in zip(hours, bdays)]
 
     elif profile_type == 'offpeak':
-        # Off-peak: noční hodiny 0-8 a 22-23
-        constraints = [0 if (h <= 8 or h >= 22) else -1 for h in df_work['hour']]
+        constraints = [0 if ((not bd) or h < 8 or h >= 20) else -1
+                       for h, bd in zip(hours, bdays)]
 
     elif profile_type == 'custom' and custom_hours:
-        constraints = [0 if h in custom_hours else -1 for h in df_work['hour']]
+        constraints = [0 if h in custom_hours else -1 for h in hours]
 
     else:
         # 'free' nebo neurčeno = optimizer zcela volný
@@ -639,13 +691,24 @@ with st.sidebar:
         help="Spusť optimalizaci pro vybrané profily a porovnej je"
     )
     st.caption("💡 BASE = KGJ vždy zapnuto 24/7 (ignoruje limit hodin provozu)")
+    st.caption(f"📅 PEAK/EXTPEAK/OFFPEAK respektují víkendy a CZ státní svátky "
+               f"({CZ_HOLIDAYS_COVERED_YEARS[0]}–{CZ_HOLIDAYS_COVERED_YEARS[1]}).")
+
+    if st.session_state.fwd_data is not None and {'peak', 'extpeak', 'offpeak'} & set(profiles_to_run):
+        _yrs = pd.to_datetime(st.session_state.fwd_data['datetime']).dt.year.unique()
+        _missing = sorted(int(y) for y in _yrs
+                          if y < CZ_HOLIDAYS_COVERED_YEARS[0] or y > CZ_HOLIDAYS_COVERED_YEARS[1])
+        if _missing:
+            st.warning(f"⚠️ Kalendář CZ svátků pokrývá jen "
+                       f"{CZ_HOLIDAYS_COVERED_YEARS[0]}–{CZ_HOLIDAYS_COVERED_YEARS[1]}. "
+                       f"Pro roky {_missing} se uplatní jen víkendy.")
 
     profile_definitions = {
-        'free':    {'name': 'Volná Opt.',          'hours': None,                          'desc': 'Bez omezení'},
-        'base':    {'name': 'Base (0-24h)',         'hours': list(range(24)),               'desc': 'Celý den'},
-        'peak':    {'name': 'Peak (9-21h)',         'hours': list(range(9, 22)),            'desc': '12 hodin'},
-        'extpeak': {'name': 'ExtPeak (6-22h)',      'hours': list(range(6, 23)),            'desc': '16 hodin'},
-        'offpeak': {'name': 'Offpeak (0-8,22-23h)', 'hours': list(range(0, 9))+[22, 23],   'desc': '11 hodin'},
+        'free':    {'name': 'Volná Opt.',                  'hours': None,                                    'desc': 'Bez omezení'},
+        'base':    {'name': 'Base (24/7)',                 'hours': list(range(24)),                         'desc': 'Celý den, každý den'},
+        'peak':    {'name': 'Peak (Po-Pá 8-20h)',          'hours': list(range(8, 20)),                      'desc': '12 h × pracovní dny (mimo svátky)'},
+        'extpeak': {'name': 'ExtPeak (Po-Pá 6-22h)',       'hours': list(range(6, 22)),                      'desc': '16 h × pracovní dny (mimo svátky)'},
+        'offpeak': {'name': 'Offpeak (víkendy+svátky+noc)', 'hours': list(range(0, 8)) + list(range(20, 24)), 'desc': 'Víkendy/svátky 24 h + Po-Pá 20-8 h'},
     }
     
     custom_hours = None
