@@ -411,7 +411,7 @@ def build_parameters_df(params, uses):
         if p.get('kgj_gas_fix'):
             add('KGJ', 'Fixní cena plynu [€/MWh]', p.get('kgj_gas_fix_price', '–'))
         # Fixní výkupní cena EE per profil — pouze zapnuté checkboxy
-        for prof in ('base', 'peak', 'extpeak', 'offpeak', 'special'):
+        for prof in ('free', 'base', 'peak', 'extpeak', 'offpeak', 'special'):
             if p.get(f'kgj_ee_fix_{prof}'):
                 add('KGJ', f'Fixní výkupní cena EE — {prof.upper()} [€/MWh]',
                     p.get(f'kgj_ee_fix_price_{prof}', '–'))
@@ -662,6 +662,14 @@ with st.sidebar:
             years    = sorted(df_raw[date_col].dt.year.unique())
             sel_year = st.selectbox("Rok pro analýzu", years)
             df_year  = df_raw[df_raw[date_col].dt.year == sel_year].copy()
+            # Odstranit duplicitní časové značky (typicky z DST přechodů v PXE/OTE FWD)
+            _n_before = len(df_year)
+            df_year = (df_year
+                       .drop_duplicates(subset=date_col, keep='first')
+                       .sort_values(date_col)
+                       .reset_index(drop=True))
+            if len(df_year) < _n_before:
+                st.caption(f"ℹ️ FWD: odstraněno {_n_before - len(df_year)} duplicitních časových značek (DST).")
 
             avg_ee  = float(df_year.iloc[:, 1].mean())
             avg_gas = float(df_year.iloc[:, 2].mean())
@@ -858,6 +866,10 @@ with t_tech:
         st.caption("PPA / POZE zelený bonus — pro každý profil samostatná smluvní cena. Pokud není zaškrtnuto, použije se spotová cena z nahrané křivky.")
         col_fp1, col_fp2 = st.columns(2)
         with col_fp1:
+            p['kgj_ee_fix_free'] = st.checkbox("Fix cena – FREE", value=False, key="cb_kgj_fix_free")
+            if p['kgj_ee_fix_free']:
+                p['kgj_ee_fix_price_free'] = st.number_input("FREE cena [€/MWh]",
+                    value=100.0, key="ni_kgj_fix_free")
             p['kgj_ee_fix_base'] = st.checkbox("Fix cena – BASE", value=False, key="cb_kgj_fix_base")
             if p['kgj_ee_fix_base']:
                 p['kgj_ee_fix_price_base'] = st.number_input("BASE cena [€/MWh]",
@@ -1010,10 +1022,10 @@ def compute_linear_fuel_params(k_th, k_min, eta_th_rated, eta_th_min, eta_el_rat
 def get_kgj_fix_price(p, profile_type):
     """Vrátí (is_active, price) — fixní výkupní cena KGJ pro daný profil.
 
-    Pro profily 'free' a 'custom' fix neexistuje (vždy spot cena z křivky).
-    Pro BASE/PEAK/EXTPEAK/OFFPEAK se vrátí (True, price) pokud je checkbox zapnutý.
+    Pro profil 'custom' fix neexistuje (vždy spot cena z křivky).
+    Pro FREE/BASE/PEAK/EXTPEAK/OFFPEAK/SPECIAL se vrátí (True, price) pokud je checkbox zapnutý.
     """
-    if profile_type in ('free', 'custom'):
+    if profile_type == 'custom':
         return False, None
     flag_key = f'kgj_ee_fix_{profile_type}'
     price_key = f'kgj_ee_fix_price_{profile_type}'
@@ -1601,7 +1613,18 @@ if st.session_state.fwd_data is not None and loc_file is not None:
     df_loc.columns = [str(c).strip() for c in df_loc.columns]
     df_loc.rename(columns={df_loc.columns[0]: 'datetime'}, inplace=True)
     df_loc['datetime'] = pd.to_datetime(df_loc['datetime'], dayfirst=True)
-    df = pd.merge(st.session_state.fwd_data, df_loc, on='datetime', how='inner').fillna(0)
+    # Odstranit duplicitní časové značky (typicky z DST přechodů)
+    _n_loc_before = len(df_loc)
+    df_loc = (df_loc
+              .drop_duplicates(subset='datetime', keep='first')
+              .sort_values('datetime')
+              .reset_index(drop=True))
+    if len(df_loc) < _n_loc_before:
+        st.caption(f"ℹ️ Lokální data: odstraněno {_n_loc_before - len(df_loc)} duplicitních časových značek (DST).")
+    df = (pd.merge(st.session_state.fwd_data, df_loc, on='datetime', how='inner')
+          .fillna(0)
+          .sort_values('datetime')
+          .reset_index(drop=True))
     if use_fve and 'fve_installed_p' in p and 'FVE (MW)' in df.columns:
         df['FVE (MW)'] = df['FVE (MW)'].clip(0, 1) * p['fve_installed_p']
     T = len(df)
