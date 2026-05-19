@@ -1622,15 +1622,18 @@ if st.session_state.fwd_data is not None and loc_file is not None:
     if len(df_loc) < _n_loc_before:
         st.caption(f"ℹ️ Lokální data: odstraněno {_n_loc_before - len(df_loc)} duplicitních časových značek (DST).")
 
-    # Vygenerovat kanonickou hodinovou osu pro vybraný rok (8760 h / 8784 h pro přestupný rok).
+    # Vygenerovat kanonickou hodinovou osu pro skutečný rozsah FWD dat.
     # Tím se srovnají případné DST nesrovnalosti mezi FWD a poptávkou tepla
-    # (např. chybějící „phantom" 02:00 z přechodu na letní čas) — výsledek má vždy
-    # přesně tolik hodin, kolik kalendářní rok má.
+    # (např. chybějící „phantom" 02:00 z přechodu na letní čas) a zároveň se
+    # respektuje období dat, které uživatel skutečně nahrál (např. pouze Q4),
+    # bez nafukování na celý kalendářní rok.
     _fwd_src = st.session_state.fwd_data.copy()
     _fwd_src['datetime'] = pd.to_datetime(_fwd_src['datetime'])
+    _fwd_start = _fwd_src['datetime'].min().floor('h')
+    _fwd_end   = _fwd_src['datetime'].max().floor('h')
     _yr = int(_fwd_src['datetime'].dt.year.mode().iloc[0])
     _canonical = pd.DataFrame({
-        'datetime': pd.date_range(f'{_yr}-01-01 00:00:00', f'{_yr}-12-31 23:00:00', freq='h')
+        'datetime': pd.date_range(_fwd_start, _fwd_end, freq='h')
     })
     # FWD: zarovnat na kanonickou osu, případné chybějící ceny dopočítat ffill+bfill
     _fwd_aligned = (_canonical
@@ -1645,9 +1648,15 @@ if st.session_state.fwd_data is not None and loc_file is not None:
     if use_fve and 'fve_installed_p' in p and 'FVE (MW)' in df.columns:
         df['FVE (MW)'] = df['FVE (MW)'].clip(0, 1) * p['fve_installed_p']
     T = len(df)
-    _expected = 8784 if pd.Timestamp(f'{_yr}-12-31').is_leap_year else 8760
-    if T != _expected:
-        st.warning(f"⚠️ Načteno {T} hodin pro rok {_yr}, očekáváno {_expected}.")
+    # Sanity check: warn if heat demand has many zero rows (typický příznak
+    # špatně přizpůsobeného období lokálních dat vs. FWD).
+    if 'Poptávka po teple (MW)' in df.columns:
+        _zero_pct = (df['Poptávka po teple (MW)'] == 0).mean()
+        if _zero_pct > 0.05:
+            st.warning(
+                f"⚠️ Poptávka po teple = 0 pro {100*_zero_pct:.1f} % načtených hodin. "
+                f"Zkontroluj, že období FWD a poptávky se shoduje."
+            )
     st.info(f"Načteno **{T}** hodin ({df['datetime'].min().date()} → {df['datetime'].max().date()})")
 
     uses = dict(kgj=use_kgj, boil=use_boil, ek=use_ek, tes=use_tes,
