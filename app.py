@@ -662,14 +662,12 @@ with st.sidebar:
             years    = sorted(df_raw[date_col].dt.year.unique())
             sel_year = st.selectbox("Rok pro analýzu", years)
             df_year  = df_raw[df_raw[date_col].dt.year == sel_year].copy()
-            # Odstranit duplicitní časové značky (typicky z DST přechodů v PXE/OTE FWD)
-            _n_before = len(df_year)
+            # Stable sort, ale ZACHOVAT podzimní DST duplicitu (02:00 CEST + 02:00 CET).
+            # Standardní PXE/OTE FWD pro rok obsahuje 8760 hodin včetně tohoto duplicitního
+            # 02:00 v den podzimního přechodu — drop by způsobil zkreslení modelu.
             df_year = (df_year
-                       .drop_duplicates(subset=date_col, keep='first')
-                       .sort_values(date_col)
+                       .sort_values(date_col, kind='stable')
                        .reset_index(drop=True))
-            if len(df_year) < _n_before:
-                st.caption(f"ℹ️ FWD: odstraněno {_n_before - len(df_year)} duplicitních časových značek (DST).")
 
             avg_ee  = float(df_year.iloc[:, 1].mean())
             avg_gas = float(df_year.iloc[:, 2].mean())
@@ -1613,50 +1611,55 @@ if st.session_state.fwd_data is not None and loc_file is not None:
     df_loc.columns = [str(c).strip() for c in df_loc.columns]
     df_loc.rename(columns={df_loc.columns[0]: 'datetime'}, inplace=True)
     df_loc['datetime'] = pd.to_datetime(df_loc['datetime'], dayfirst=True)
-    # Odstranit duplicitní časové značky (typicky z DST přechodů)
-    _n_loc_before = len(df_loc)
-    df_loc = (df_loc
-              .drop_duplicates(subset='datetime', keep='first')
-              .sort_values('datetime')
-              .reset_index(drop=True))
-    if len(df_loc) < _n_loc_before:
-        st.caption(f"ℹ️ Lokální data: odstraněno {_n_loc_before - len(df_loc)} duplicitních časových značek (DST).")
+    # Stable sort, duplicity z DST (např. 02:00 podzim) ZACHOVAT —
+    # reprezentují CEST a CET, jsou to dva různé okamžiky se samostatnou hodnotou.
+    df_loc = df_loc.sort_values('datetime', kind='stable').reset_index(drop=True)
 
-    # Vygenerovat kanonickou hodinovou osu pro skutečný rozsah FWD dat.
-    # Tím se srovnají případné DST nesrovnalosti mezi FWD a poptávkou tepla
-    # (např. chybějící „phantom" 02:00 z přechodu na letní čas) a zároveň se
-    # respektuje období dat, které uživatel skutečně nahrál (např. pouze Q4),
-    # bez nafukování na celý kalendářní rok.
-    _fwd_src = st.session_state.fwd_data.copy()
-    _fwd_src['datetime'] = pd.to_datetime(_fwd_src['datetime'])
-    _fwd_start = _fwd_src['datetime'].min().floor('h')
-    _fwd_end   = _fwd_src['datetime'].max().floor('h')
+    # FWD je primární zdroj časové osy. Ořežeme poptávku na stejné období
+    # (rok vybraný v FWD selectboxu) a spojíme pozičně — tím zachováme
+    # podzimní DST duplicitu a vyhneme se "phantom" DST hodinám z pd.date_range().
+    _fwd_src = (st.session_state.fwd_data.copy()
+                .assign(datetime=lambda d: pd.to_datetime(d['datetime']))
+                .sort_values('datetime', kind='stable')
+                .reset_index(drop=True))
     _yr = int(_fwd_src['datetime'].dt.year.mode().iloc[0])
-    _canonical = pd.DataFrame({
-        'datetime': pd.date_range(_fwd_start, _fwd_end, freq='h')
-    })
-    # FWD: zarovnat na kanonickou osu, případné chybějící ceny dopočítat ffill+bfill
-    _fwd_aligned = (_canonical
-                    .merge(_fwd_src, on='datetime', how='left')
-                    .ffill()
-                    .bfill())
-    # Lokální data: zarovnat na kanonickou osu, chybějící hodnoty (např. phantom DST hodina) → 0
-    df = (_fwd_aligned
-          .merge(df_loc, on='datetime', how='left')
-          .fillna(0)
-          .reset_index(drop=True))
+    _loc_year = (df_loc[df_loc['datetime'].dt.year == _yr]
+                 .sort_values('datetime', kind='stable')
+                 .reset_index(drop=True))
+
+    # Inteligentní spojení: pokud FWD a poptávka mají identickou sekvenci
+    # datumů (stejná délka, stejné pořadí), použijeme poziční concat —
+    # tím zachováme všechny DST duplicity v originálním pořadí. Jinak
+    # fallback na datetime-merge (s dedupem, který v tomto případě nevadí,
+    # protože soubory nejsou sladěné).
+    if (len(_fwd_src) == len(_loc_year)
+            and (_fwd_src['datetime'].values == _loc_year['datetime'].values).all()):
+        df = pd.concat(
+            [_fwd_src, _loc_year.drop(columns=['datetime'])],
+            axis=1
+        ).reset_index(drop=True)
+    else:
+        # Datumy se neshodují — datetime merge s dedup (méně přesné pro DST,
+        # ale robustní k partial-year a různě dlouhým vstupům).
+        _fwd_dedup = _fwd_src.drop_duplicates(subset='datetime', keep='first')
+        _loc_dedup = _loc_year.drop_duplicates(subset='datetime', keep='first')
+        df = _fwd_dedup.merge(_loc_dedup, on='datetime', how='left').reset_index(drop=True)
+        st.caption(
+            f"ℹ️ FWD a poptávka nejsou pozičně sladěné — použit datetime merge "
+            f"(FWD: {len(_fwd_src)} řádků, poptávka {_yr}: {len(_loc_year)} řádků)."
+        )
+
     if use_fve and 'fve_installed_p' in p and 'FVE (MW)' in df.columns:
         df['FVE (MW)'] = df['FVE (MW)'].clip(0, 1) * p['fve_installed_p']
     T = len(df)
-    # Sanity check: warn if heat demand has many zero rows (typický příznak
-    # špatně přizpůsobeného období lokálních dat vs. FWD).
     if 'Poptávka po teple (MW)' in df.columns:
-        _zero_pct = (df['Poptávka po teple (MW)'] == 0).mean()
-        if _zero_pct > 0.05:
+        _missing = int(df['Poptávka po teple (MW)'].isna().sum())
+        if _missing > 0:
             st.warning(
-                f"⚠️ Poptávka po teple = 0 pro {100*_zero_pct:.1f} % načtených hodin. "
-                f"Zkontroluj, že období FWD a poptávky se shoduje."
+                f"⚠️ {_missing} hodin nemá hodnotu poptávky tepla — doplňuji 0. "
+                f"Zkontroluj sladění období obou souborů."
             )
+    df = df.fillna(0).reset_index(drop=True)
     st.info(f"Načteno **{T}** hodin ({df['datetime'].min().date()} → {df['datetime'].max().date()})")
 
     uses = dict(kgj=use_kgj, boil=use_boil, ek=use_ek, tes=use_tes,
