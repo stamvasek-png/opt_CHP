@@ -439,10 +439,107 @@ def _build(grid: TimeGrid, profile: Profile, series: InputSeries,
 
 def _add_afrr_constraints(model, V, grid: TimeGrid, profile: Profile,
                           afrr: AfrrRequirement) -> None:
-    """aFRR rezervační omezení — doplní WP5. Bez rezerv no-op; s rezervami
-    zatím vyvolá NotImplementedError (implementace v dalším balíčku)."""
-    if afrr.any_reserved:
-        raise NotImplementedError("aFRR rezervace přijdou ve WP5.")
+    """aFRR rezervační omezení (lineární, spojité sdílení rezervy per asset).
+
+    Pro každý MTU v bloku s rezervou platí rovnost pokrytí:
+        Σ r_up(asset,t) == R_up[blok],  Σ r_dn(asset,t) == R_dn[blok]
+    a per-asset proveditelnost:
+        KGJ:  e(t) + r_up ≤ e_max·on;   e(t) − r_dn ≥ e_min·on  (on=0 ⇒ r=0)
+        BESS: (dis−cha) + r_up ≤ P;     (cha−dis) + r_dn ≤ P
+              soc[t+1] ≥ r_up·τ/eff;    cap − soc[t+1] ≥ r_dn·τ·eff
+        EK:   r_dn ≤ E_max − ee_ek(t)   (zvýšení spotřeby = záporná regulace)
+    Rezervy nemají cenu v objective — jejich náklad je ušlá flexibilita.
+    """
+    if not afrr.any_reserved:
+        V["reserves"] = {}
+        return
+    n = grid.n
+    tau = afrr.activation_h
+    r_up_t = afrr.r_up_mw[grid.block_of]
+    r_dn_t = afrr.r_dn_mw[grid.block_of]
+    up_ts = [t for t in range(n) if r_up_t[t] > 1e-9]
+    dn_ts = [t for t in range(n) if r_dn_t[t] > 1e-9]
+
+    reserves: dict = {}
+    up_by_t: dict[int, list] = {t: [] for t in up_ts}
+    dn_by_t: dict[int, list] = {t: [] for t in dn_ts}
+    site_up: dict[str, dict[int, list]] = {}
+    site_dn: dict[str, dict[int, list]] = {}
+
+    for s in profile.sites:
+        sv = V["sites"][s.site_id]
+        site_up[s.site_id] = {t: [] for t in up_ts}
+        site_dn[s.site_id] = {t: [] for t in dn_ts}
+        for key in [k for k in sv if isinstance(k, tuple)]:
+            typ, aid = key
+            a = sv[key]
+            p = a.get("params")
+            if p is None or not getattr(p, "afrr_capable", False):
+                continue
+            rkey = (s.site_id, typ, aid)
+            if typ == "kgj":
+                c0_th, c1_th, c0_el, c1_el = a["coefs"]
+                e_min, e_max = kgj_el_bounds(p)
+                r_up = {t: pulp.LpVariable(_v("rUp", *rkey, t), 0)
+                        for t in up_ts}
+                r_dn = {t: pulp.LpVariable(_v("rDn", *rkey, t), 0)
+                        for t in dn_ts}
+                for t in up_ts:
+                    e_t = c0_el * a["on"][t] + c1_el * a["q"][t]
+                    model += e_t + r_up[t] <= e_max * a["on"][t]
+                for t in dn_ts:
+                    e_t = c0_el * a["on"][t] + c1_el * a["q"][t]
+                    model += e_t - r_dn[t] >= e_min * a["on"][t]
+                reserves[rkey] = {"up": r_up, "dn": r_dn}
+            elif typ == "bess":
+                r_up = {t: pulp.LpVariable(_v("rUp", *rkey, t), 0)
+                        for t in up_ts}
+                r_dn = {t: pulp.LpVariable(_v("rDn", *rkey, t), 0)
+                        for t in dn_ts}
+                for t in up_ts:
+                    model += (a["dis"][t] - a["cha"][t]) + r_up[t] <= p.bess_p
+                    model += a["soc"][t + 1] >= r_up[t] * tau / p.bess_eff
+                for t in dn_ts:
+                    model += (a["cha"][t] - a["dis"][t]) + r_dn[t] <= p.bess_p
+                    model += p.bess_cap - a["soc"][t + 1] \
+                        >= r_dn[t] * tau * p.bess_eff
+                reserves[rkey] = {"up": r_up, "dn": r_dn}
+            elif typ == "ek":
+                e_in_max = p.ek_max / p.ek_eff
+                r_dn = {t: pulp.LpVariable(_v("rDn", *rkey, t), 0)
+                        for t in dn_ts}
+                for t in dn_ts:
+                    model += r_dn[t] <= e_in_max - a["q"][t] / p.ek_eff
+                reserves[rkey] = {"up": {}, "dn": r_dn}
+            else:
+                continue
+            for t in up_ts:
+                if t in reserves[rkey]["up"]:
+                    up_by_t[t].append(reserves[rkey]["up"][t])
+                    site_up[s.site_id][t].append(reserves[rkey]["up"][t])
+            for t in dn_ts:
+                if t in reserves[rkey]["dn"]:
+                    dn_by_t[t].append(reserves[rkey]["dn"][t])
+                    site_dn[s.site_id][t].append(reserves[rkey]["dn"][t])
+
+    for t in up_ts:
+        model += pulp.lpSum(up_by_t[t]) == float(r_up_t[t]), _v("covUp", t)
+    for t in dn_ts:
+        model += pulp.lpSum(dn_by_t[t]) == float(r_dn_t[t]), _v("covDn", t)
+
+    # limity připojení musí unést i aktivaci rezervy
+    for s in profile.sites:
+        sv = V["sites"][s.site_id]
+        if s.grid_export_limit_mw is not None:
+            for t in up_ts:
+                model += sv["export"][t] + pulp.lpSum(site_up[s.site_id][t]) \
+                    <= s.grid_export_limit_mw
+        if s.grid_import_limit_mw is not None:
+            for t in dn_ts:
+                model += sv["import"][t] + pulp.lpSum(site_dn[s.site_id][t]) \
+                    <= s.grid_import_limit_mw
+
+    V["reserves"] = reserves
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -646,5 +743,19 @@ def _extract(grid: TimeGrid, profile: Profile, series: InputSeries,
 
 
 def _extract_reserves(grid: TimeGrid, profile: Profile, V) -> pd.DataFrame | None:
-    """Alokace aFRR rezerv per asset — doplní WP5 (bez rezerv None)."""
-    return None
+    """Alokace aFRR rezerv per asset a MTU [MW]; None bez rezervací."""
+    reserves = V.get("reserves") or {}
+    if not reserves:
+        return None
+    n = grid.n
+    cols: dict[str, np.ndarray] = {}
+    for (site_id, typ, aid), rr in reserves.items():
+        for direction in ("up", "dn"):
+            arr = np.zeros(n)
+            for t, var in rr[direction].items():
+                arr[t] = _val(var)
+            if rr[direction]:
+                cols[f"{site_id}|{aid}|r_{direction}_mw"] = arr
+    df = pd.DataFrame(cols, index=np.arange(1, n + 1))
+    df.index.name = "MTU"
+    return df
