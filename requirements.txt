@@ -1,7 +1,8 @@
 streamlit
 pandas
+numpy
 pulp
 openpyxl
-
 plotly
 xlsxwriter
+pyarrow
