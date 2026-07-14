@@ -1,0 +1,173 @@
+{
+  "profile_id": "demo",
+  "name": "Demo: teplárna + FVE portfolio",
+  "description": "1 tepelná lokalita (KGJ + kotel + EK + TES + import) + 2 FVE/BESS lokality s TDD spotřebou",
+  "afrr_activation_h": 1.0,
+  "schema_version": 1,
+  "created_at": "2026-07-14T00:00:00+00:00",
+  "updated_at": "2026-07-14T00:00:00+00:00",
+  "sites": [
+    {
+      "site_id": "teplarna_a",
+      "name": "Teplárna A",
+      "kind": "heat",
+      "dist_ee_buy": 12.0,
+      "dist_ee_sell": 0.0,
+      "gas_dist": 10.0,
+      "internal_ee_use": true,
+      "grid_export_limit_mw": null,
+      "grid_import_limit_mw": null,
+      "h_price": 95.0,
+      "h_cover": 0.99,
+      "shortfall_penalty": 500.0,
+      "kgjs": [
+        {
+          "asset_id": "kgj1",
+          "name": "KGJ 1",
+          "k_th": 0.605,
+          "k_eff_th": 0.531,
+          "k_eff_el": 0.395,
+          "k_min": 0.5,
+          "k_start_cost": 150.0,
+          "k_min_runtime_h": 4.0,
+          "k_service_cost": 14.0,
+          "var_eff": false,
+          "eta_th_min": null,
+          "eta_el_min": null,
+          "gas_fix": true,
+          "gas_fix_price": 40.0,
+          "ee_fix": false,
+          "ee_fix_price": null,
+          "afrr_capable": true
+        }
+      ],
+      "boilers": [
+        {
+          "asset_id": "kotel1",
+          "name": "Plynový kotel",
+          "b_max": 4.44,
+          "boil_eff": 0.86,
+          "gas_fix": true,
+          "gas_fix_price": 40.0
+        }
+      ],
+      "eks": [
+        {
+          "asset_id": "ek1",
+          "name": "Elektrokotel",
+          "ek_max": 0.4,
+          "ek_eff": 0.99,
+          "ee_fix": false,
+          "ee_fix_price": null,
+          "afrr_capable": true
+        }
+      ],
+      "tes_units": [
+        {
+          "asset_id": "tes1",
+          "name": "Nádrž TES",
+          "tes_cap": 1.52,
+          "tes_loss_pct_h": 0.5,
+          "soc_start_frac": 0.5,
+          "soc_end_min_frac": 0.3
+        }
+      ],
+      "bess_units": [],
+      "pvs": [],
+      "heat_imports": [
+        {
+          "asset_id": "imp1",
+          "name": "Import tepla",
+          "imp_max": 2.0,
+          "imp_price": 150.0
+        }
+      ],
+      "consumption": {"mode": "none", "tdd_class": null, "annual_mwh": null},
+      "co2_price": 0.0,
+      "co2_gas_factor": 0.202,
+      "co2_grid_factor": 0.250
+    },
+    {
+      "site_id": "fve_brno",
+      "name": "FVE Brno",
+      "kind": "fve_bess",
+      "dist_ee_buy": 12.0,
+      "dist_ee_sell": 0.0,
+      "gas_dist": 0.0,
+      "internal_ee_use": true,
+      "grid_export_limit_mw": null,
+      "grid_import_limit_mw": null,
+      "h_price": 0.0,
+      "h_cover": 0.0,
+      "shortfall_penalty": 0.0,
+      "kgjs": [],
+      "boilers": [],
+      "eks": [],
+      "tes_units": [],
+      "bess_units": [
+        {
+          "asset_id": "bess1",
+          "name": "Baterie Brno",
+          "bess_cap": 2.0,
+          "bess_p": 1.0,
+          "bess_eff": 0.9,
+          "bess_cycle_cost": 5.0,
+          "soc_start_frac": 0.2,
+          "soc_end_min_frac": 0.2,
+          "dist_buy_extra": false,
+          "dist_sell_extra": false,
+          "ee_fix": false,
+          "ee_fix_price": null,
+          "afrr_capable": true
+        }
+      ],
+      "pvs": [
+        {
+          "asset_id": "fve1",
+          "name": "FVE Brno střecha",
+          "installed_mw": 1.0,
+          "dist_sell": false,
+          "allow_curtailment": true
+        }
+      ],
+      "heat_imports": [],
+      "consumption": {"mode": "tdd", "tdd_class": "TDD4", "annual_mwh": 120.0},
+      "co2_price": 0.0,
+      "co2_gas_factor": 0.202,
+      "co2_grid_factor": 0.250
+    },
+    {
+      "site_id": "fve_zlin",
+      "name": "FVE Zlín",
+      "kind": "fve_bess",
+      "dist_ee_buy": 12.0,
+      "dist_ee_sell": 0.0,
+      "gas_dist": 0.0,
+      "internal_ee_use": true,
+      "grid_export_limit_mw": null,
+      "grid_import_limit_mw": null,
+      "h_price": 0.0,
+      "h_cover": 0.0,
+      "shortfall_penalty": 0.0,
+      "kgjs": [],
+      "boilers": [],
+      "eks": [],
+      "tes_units": [],
+      "bess_units": [],
+      "pvs": [
+        {
+          "asset_id": "fve1",
+          "name": "FVE Zlín pole",
+          "installed_mw": 0.5,
+          "dist_sell": false,
+          "allow_curtailment": true
+        }
+      ],
+      "heat_imports": [],
+      "consumption": {"mode": "curve", "tdd_class": null, "annual_mwh": null},
+      "co2_price": 0.0,
+      "co2_gas_factor": 0.202,
+      "co2_grid_factor": 0.250
+    }
+  ]
+}
