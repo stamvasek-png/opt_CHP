@@ -252,8 +252,12 @@ def build_parameters_df(params, uses):
         add('KGJ', 'Min. doba běhu [hod]', p.get('k_min_runtime', 0))
         add('KGJ', 'Servisní náklad [€/h provozu]', p.get('k_service_cost', 0))
         if p.get('kgj_ramp_on'):
-            add('KGJ', 'Doba nájezdu [min]', p.get('k_ramp_up_min', 0))
-            add('KGJ', 'Doba sjezdu [min]', p.get('k_ramp_down_min', 0))
+            add('KGJ', 'Doba nájezdu — elektřina [min]', p.get('k_ramp_up_el_min', 0))
+            add('KGJ', 'Doba sjezdu — elektřina [min]', p.get('k_ramp_down_el_min', 0))
+            add('KGJ', 'Doba nájezdu — teplo [min]', p.get('k_ramp_up_th_min', 0))
+            add('KGJ', 'Doba sjezdu — teplo [min]', p.get('k_ramp_down_th_min', 0))
+            add('KGJ', 'Tepelná rampa oddělená od elektrické',
+                'ANO' if p.get('kgj_ramp_th_split') else 'NE')
         if p.get('kgj_var_eff'):
             add('KGJ', 'η_th při min. zátěži [-]', p.get('eta_th_min', '–'))
             add('KGJ', 'η_el při min. zátěži [-]', p.get('eta_el_min', '–'))
@@ -721,25 +725,69 @@ with t_tech:
                  "méně než plný výkon, hodina po vypnutí ještě nese doběh. "
                  "Metriky 'Provozní hodiny KGJ' dál počítají jen nasazené hodiny, bez doběhů.")
         if p['kgj_ramp_on']:
+            st.caption("Doba se zadává jako **ekvivalentní minuty rampy** — v hodinovém "
+                       "průměru nejde odlišit mrtvou dobu (u elektřiny synchronizace "
+                       "generátoru) od pomalejší rampy.")
             cr1, cr2 = st.columns(2)
             with cr1:
-                p['k_ramp_up_min'] = st.number_input(
-                    "Doba nájezdu [min]", value=10.0, min_value=0.0, max_value=60.0, step=1.0,
-                    help="Doba od startu do dosažení nasazeného výkonu (lineární rampa). "
+                p['k_ramp_up_el_min'] = st.number_input(
+                    "Nájezd — elektřina [min]", value=10.0,
+                    min_value=0.0, max_value=60.0, step=0.1,
+                    help="Od startu motoru do dosažení nasazeného výkonu, včetně doby, "
+                         "než se generátor synchronizuje na síť. "
                          "Max. 60 min — delší rampa by se rozlila do další hodiny.")
             with cr2:
-                p['k_ramp_down_min'] = st.number_input(
-                    "Doba sjezdu [min]", value=10.0, min_value=0.0, max_value=60.0, step=1.0,
-                    help="Doba od povelu k odstavení do nulového výkonu. Doběh spadne "
+                p['k_ramp_down_el_min'] = st.number_input(
+                    "Sjezd — elektřina [min]", value=10.0,
+                    min_value=0.0, max_value=60.0, step=0.1,
+                    help="Řízené odlehčení než se otevře vypínač. Doběh spadne "
                          "do hodiny po posledním provozním slotu.")
-            _a_up = p['k_ramp_up_min'] / 120.0
-            _a_dn = p['k_ramp_down_min'] / 120.0
-            st.caption(f"ℹ️ První hodina běhu: **{(1-_a_up)*100:.1f} %** "
-                       f"({(1-_a_up)*p['k_th']:.3f} MW_th) | "
-                       f"Hodina po vypnutí: **{_a_dn*100:.1f} %** "
-                       f"({_a_dn*p['k_th']:.3f} MW_th)")
+
+            # Teplo se chová jinak: vzniká hned při zážehu, ale nejdřív ohřívá blok
+            # a výměník, a po odstavení ho dochlazení tlačí do sítě ještě dlouho
+            # potom, co se motor zastavil.
+            p['kgj_ramp_th_split'] = st.checkbox(
+                "Tepelná rampa se liší od elektrické", value=False,
+                help="Teplo má vlastní dynamiku — dochlazení po odstavení bývá výrazně "
+                     "delší než elektrický sjezd a nestojí žádný plyn. Bez zaškrtnutí "
+                     "sleduje teplo elektřinu. Plyn jde vždy s motorem, tedy s elektřinou.")
+            if p['kgj_ramp_th_split']:
+                ct1, ct2 = st.columns(2)
+                with ct1:
+                    p['k_ramp_up_th_min'] = st.number_input(
+                        "Nájezd — teplo [min]", value=float(p['k_ramp_up_el_min']),
+                        min_value=0.0, max_value=60.0, step=0.1,
+                        help="Teplo jde nejdřív do ohřevu bloku a výměníku, takže "
+                             "užitečný výkon náběhá pomaleji než elektrický.")
+                with ct2:
+                    p['k_ramp_down_th_min'] = st.number_input(
+                        "Sjezd — teplo [min]", value=float(p['k_ramp_down_el_min']),
+                        min_value=0.0, max_value=60.0, step=0.1,
+                        help="Dochlazení — čerpadla tlačí zbytkové teplo z bloku do sítě "
+                             "ještě 5–15 min po zastavení motoru.")
+                st.caption("⚠️ Náběh a sjezd tepla by měly vyjít **zhruba stejně** — je to "
+                           "tatáž energie, co se nejdřív uloží do hmoty motoru a pak se "
+                           "vrátí. Výrazně delší sjezd než náběh znamená teplo zadarmo.")
+            else:
+                p['k_ramp_up_th_min'] = p['k_ramp_up_el_min']
+                p['k_ramp_down_th_min'] = p['k_ramp_down_el_min']
+
+            _a_up_el = p['k_ramp_up_el_min'] / 120.0
+            _a_dn_el = p['k_ramp_down_el_min'] / 120.0
+            _a_up_th = p['k_ramp_up_th_min'] / 120.0
+            _a_dn_th = p['k_ramp_down_th_min'] / 120.0
+            st.caption(
+                f"ℹ️ Elektřina — první hodina: **{(1-_a_up_el)*100:.1f} %** "
+                f"({(1-_a_up_el)*k_el_derived:.3f} MW_el) · "
+                f"po vypnutí: **{_a_dn_el*100:.1f} %** ({_a_dn_el*k_el_derived:.3f} MW_el)")
+            st.caption(
+                f"ℹ️ Teplo — první hodina: **{(1-_a_up_th)*100:.1f} %** "
+                f"({(1-_a_up_th)*p['k_th']:.3f} MW_th) · "
+                f"po vypnutí: **{_a_dn_th*100:.1f} %** ({_a_dn_th*p['k_th']:.3f} MW_th)")
         else:
-            p['k_ramp_up_min'] = p['k_ramp_down_min'] = 0.0
+            p['kgj_ramp_th_split'] = False
+            p['k_ramp_up_el_min'] = p['k_ramp_down_el_min'] = 0.0
+            p['k_ramp_up_th_min'] = p['k_ramp_down_th_min'] = 0.0
         # Roční limit hodin
         p['kgj_hour_limit_on'] = st.checkbox("Omezit max. počet provozních hodin KGJ / rok", value=False)
         if p['kgj_hour_limit_on']:

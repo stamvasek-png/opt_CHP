@@ -273,12 +273,34 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
     # Lineární rampa délky τ minut ⇒ hodina startu dodá průměrně P·(1 − τ/120),
     # hodina po vypnutí ještě P·(τ/120). τ je omezené na 0–60 min, aby se rampa
     # nikdy nerozlila do dalšího slotu (nad 60 min by vzorec neplatil).
+    #
+    # τ se chápe jako "ekvivalentní minuty rampy", ne jako doslovná strmost:
+    # v hodinovém průměru nejde odlišit mrtvou dobu (u elektřiny synchronizace
+    # generátoru) od pomalejší rampy — mrtvá doba d plus rampa r dá stejný
+    # průměr jako lineární rampa délky 2d + r.
+    #
+    # Teplo se chová jinak než elektřina: vzniká hned při zážehu, ale nejdřív
+    # ohřívá blok a výměník, a po odstavení ho dochlazení tlačí do sítě ještě
+    # dlouho po tom, co se motor zastavil. Proto vlastní dvojice τ.
+    # Plyn sleduje elektřinu — palivo jde do motoru a motor točí generátorem.
+    def _alpha(key, fallback=0.0):
+        raw = p.get(key)
+        val = fallback if raw is None else float(raw)
+        return min(max(val, 0.0), 60.0) / 120.0
+
     if p.get('kgj_ramp_on') and u.get('kgj'):
-        a_up = min(max(float(p.get('k_ramp_up_min',   0.0)), 0.0), 60.0) / 120.0
-        a_dn = min(max(float(p.get('k_ramp_down_min', 0.0)), 0.0), 60.0) / 120.0
+        a_up_el = _alpha('k_ramp_up_el_min')
+        a_dn_el = _alpha('k_ramp_down_el_min')
+        if p.get('kgj_ramp_th_split'):
+            a_up_th = _alpha('k_ramp_up_th_min')
+            a_dn_th = _alpha('k_ramp_down_th_min')
+        else:
+            # Bez rozlišení sleduje teplo elektřinu — chování jako před rozdělením.
+            a_up_th, a_dn_th = a_up_el, a_dn_el
     else:
-        a_up = a_dn = 0.0
-    ramp_on = bool(u.get('kgj')) and (a_up > 0.0 or a_dn > 0.0)
+        a_up_el = a_dn_el = a_up_th = a_dn_th = 0.0
+    ramp_on = bool(u.get('kgj')) and any(
+        a > 0.0 for a in (a_up_el, a_dn_el, a_up_th, a_dn_th))
 
     # Strukturální prořezání: v hodině, kde profil start/stop vůbec nepřipouští,
     # se pomocné proměnné nezakládají. BASE (všude on==1) se tím smrskne na jeden
@@ -465,13 +487,16 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
             return 0
         if not ramp_on:
             return q_kgj[t]
-        return q_kgj[t] - a_up * ru[t] + a_dn * rd[t]
+        return q_kgj[t] - a_up_th * ru[t] + a_dn_th * rd[t]
 
-    def kgj_lin(t, c0, c1):
+    def kgj_lin(t, c0, c1, a_up, a_dn):
         """Afinní veličina KGJ (elektřina / plyn) po deratingu rampou.
 
         Využívá identit on[t]*start[t] == start[t] a on[t-1]*stop[t] == stop[t],
         takže i konstantní člen c0 zůstane lineární.
+
+        `a_up` / `a_dn` se předávají, protože elektřina a teplo mají vlastní
+        rampu; `ru` / `rd` na nich nezávisí, takže se sdílejí.
         """
         if not u['kgj']:
             return 0
@@ -504,7 +529,7 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         model += heat_delivered + heat_shortfall[t] >= h_dem * p['h_cover']
         model += heat_delivered <= h_dem + heat_dump[t] + 1e-3
 
-        ee_kgj_out = kgj_lin(t, c0_el, c1_el)
+        ee_kgj_out = kgj_lin(t, c0_el, c1_el, a_up_el, a_dn_el)
         ee_ek_in   = q_ek[t] / ek_eff                            if u['ek']  else 0
         # Hlavní EE bilance (ponechána jako sanity check, je odvoditelná z níže uvedených split rovnic)
         model += ee_kgj_out + fve_p + ee_import[t] + bess_dis[t] == ee_ek_in + bess_cha[t] + ee_export[t]
@@ -544,7 +569,7 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         if co2_price > 0:
             co2_gas_factor  = p.get('co2_gas_factor',  0.202)
             co2_grid_factor = p.get('co2_grid_factor', 0.250)
-            gas_kgj_mwh  = kgj_lin(t, c0_th, c1_th)
+            gas_kgj_mwh  = kgj_lin(t, c0_th, c1_th, a_up_el, a_dn_el)
             gas_boil_mwh = (q_boil[t] / boil_eff)               if u['boil'] else 0
             co2_cost = co2_price * (
                 co2_gas_factor  * (gas_kgj_mwh + gas_boil_mwh) +
@@ -557,7 +582,8 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         ee_cost_bess_grid = (p_ee_bess + p['dist_ee_buy']) * ee_bess_grid[t] if u['bess'] else 0
 
         costs = (
-            ((p_gas_kgj  + p['gas_dist']) * kgj_lin(t, c0_th, c1_th) if u['kgj'] else 0) +
+            ((p_gas_kgj  + p['gas_dist']) * kgj_lin(t, c0_th, c1_th, a_up_el, a_dn_el)
+             if u['kgj'] else 0) +
             ((p_gas_boil + p['gas_dist']) * (q_boil[t] / boil_eff)       if u['boil']     else 0) +
             ee_cost_ek_grid +
             ee_cost_bess_grid +
@@ -582,29 +608,39 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
 
     # Numerické protějšky kgj_th / kgj_lin nad vyřešeným modelem — stejný vzorec,
     # takže reportované hodnoty nemohou odbočit od objective.
-    def kgj_th_v(t):
-        if not u['kgj']:
-            return 0.0
-        return vv(q_kgj, t) - a_up * vv(ru, t) + a_dn * vv(rd, t)
+    def kgj_parts_v(t, c0, c1, a_up, a_dn):
+        """(setpoint, ztráta nájezdem, doběh) pro afinní veličinu KGJ.
 
-    def kgj_lin_v(t, c0, c1):
+        Jeden zdroj pro teplo i elektřinu, aby se obě sady sloupců nemohly
+        rozejít. Platí setpoint − ztráta + doběh = skutečná hodnota.
+        """
         if not u['kgj']:
-            return 0.0
-        base = c0 * vv(on, t) + c1 * vv(q_kgj, t)
+            return 0.0, 0.0, 0.0
+        setpoint = c0 * vv(on, t) + c1 * vv(q_kgj, t)
         if not ramp_on:
-            return base
-        return (base
-                - a_up * (c0 * vv(start, t) + c1 * vv(ru, t))
-                + a_dn * (c0 * vv(stop, t)  + c1 * vv(rd, t)))
+            return setpoint, 0.0, 0.0
+        loss = a_up * (c0 * vv(start, t) + c1 * vv(ru, t))
+        tail = a_dn * (c0 * vv(stop,  t) + c1 * vv(rd, t))
+        return setpoint, loss, tail
+
+    def kgj_lin_v(t, c0, c1, a_up, a_dn):
+        setpoint, loss, tail = kgj_parts_v(t, c0, c1, a_up, a_dn)
+        return setpoint - loss + tail
+
+    # Teplo je afinní veličina s (c0, c1) = (0, 1) — stejný helper.
+    th_parts = [kgj_parts_v(t, 0.0, 1.0, a_up_th, a_dn_th) for t in range(T)]
+    el_parts = [kgj_parts_v(t, c0_el, c1_el, a_up_el, a_dn_el) for t in range(T)]
 
     res = pd.DataFrame({
         'Čas':                  df['datetime'],
         'Poptávka tepla [MW]':  df['Poptávka po teple (MW)'],
-        'KGJ [MW_th]':          [kgj_th_v(t) for t in range(T)],
-        'KGJ setpoint [MW_th]': [vv(q_kgj,  t) for t in range(T)],
-        'KGJ nájezd ztráta [MW_th]': [a_up * vv(ru, t) for t in range(T)],
-        'KGJ doběh [MW_th]':    [a_dn * vv(rd, t) for t in range(T)],
-        'Plyn KGJ [MWh]':       [kgj_lin_v(t, c0_th, c1_th) for t in range(T)],
+        'KGJ [MW_th]':          [sp - lo + ta for sp, lo, ta in th_parts],
+        'KGJ setpoint [MW_th]': [sp for sp, _, _ in th_parts],
+        'KGJ nájezd ztráta [MW_th]': [lo for _, lo, _ in th_parts],
+        'KGJ doběh [MW_th]':    [ta for _, _, ta in th_parts],
+        # Plyn sleduje motor, tedy elektrickou rampu.
+        'Plyn KGJ [MWh]':       [kgj_lin_v(t, c0_th, c1_th, a_up_el, a_dn_el)
+                                 for t in range(T)],
         'Kotel [MW_th]':        [vv(q_boil, t) for t in range(T)],
         'Elektrokotel [MW_th]': [vv(q_ek,   t) for t in range(T)],
         'Import tepla [MW_th]': [vv(q_imp,  t) for t in range(T)],
@@ -618,7 +654,10 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         'Zahozené teplo [MW]':  [vv(heat_dump, t) for t in range(T)],
         'EE export [MW]':       [vv(ee_export, t) for t in range(T)],
         'EE import [MW]':       [vv(ee_import, t) for t in range(T)],
-        'EE z KGJ [MW]':        [kgj_lin_v(t, c0_el, c1_el) for t in range(T)],
+        'EE z KGJ [MW]':        [sp - lo + ta for sp, lo, ta in el_parts],
+        'EE z KGJ setpoint [MW]': [sp for sp, _, _ in el_parts],
+        'EE z KGJ nájezd ztráta [MW]': [lo for _, lo, _ in el_parts],
+        'EE z KGJ doběh [MW]':  [ta for _, _, ta in el_parts],
         'EE z FVE [MW]':        [float(df['FVE (MW)'].iloc[t]) if (u['fve'] and 'FVE (MW)' in df.columns) else 0.0 for t in range(T)],
         'EE do EK [MW]':        [vv(q_ek, t)/ek_eff if u['ek'] else 0.0 for t in range(T)],
         'EE do EK lokál [MW]':  [vv(ee_ek_local, t) for t in range(T)],
