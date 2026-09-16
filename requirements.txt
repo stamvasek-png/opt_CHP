@@ -1,7 +1,7 @@
 streamlit
 pandas
-pulp
+numpy
+pulp<4
 openpyxl
-
 plotly
 xlsxwriter
