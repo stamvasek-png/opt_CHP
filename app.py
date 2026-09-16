@@ -481,7 +481,7 @@ with st.sidebar:
             st.caption(f"💾 Cache: poslední běh {_ts}")
         except Exception:
             st.caption("💾 Cache: dostupná")
-        if st.button("🗑️ Vyčistit cache výsledků", use_container_width=True):
+        if st.button("🗑️ Vyčistit cache výsledků", width='stretch'):
             clear_cache()
             st.rerun()
     else:
@@ -645,7 +645,7 @@ if st.session_state.fwd_data is not None:
             fig.add_hline(y=st.session_state.ee_new, line_dash="dash", line_color="#27ae60",
                 annotation_text=f"Nový průměr {st.session_state.ee_new:.1f}")
             fig.update_layout(height=340, hovermode='x unified', margin=dict(t=30))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         with tab_gas:
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=df_fwd['datetime'], y=df_fwd['gas_original'],
@@ -657,7 +657,7 @@ if st.session_state.fwd_data is not None:
             fig.add_hline(y=st.session_state.gas_new, line_dash="dash", line_color="#e67e22",
                 annotation_text=f"Nový průměr {st.session_state.gas_new:.1f}")
             fig.update_layout(height=340, hovermode='x unified', margin=dict(t=30))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         with tab_dur:
             ee_s  = df_fwd['ee_price'].sort_values(ascending=False).values
             gas_s = df_fwd['gas_price'].sort_values(ascending=False).values
@@ -673,7 +673,7 @@ if st.session_state.fwd_data is not None:
             fig.update_xaxes(title_text="Hodiny [h]")
             fig.update_yaxes(title_text="€/MWh")
             fig.update_layout(height=340, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
 # ────────────────────────────────────────────────
 # PARAMETRY
@@ -1203,7 +1203,7 @@ if st.session_state.monthly_profile_results is not None:
 
     if best_rows:
         df_best = pd.DataFrame(best_rows)
-        st.dataframe(df_best, use_container_width=True, hide_index=True)
+        st.dataframe(df_best, width='stretch', hide_index=True)
         total_opt = sum(
             monthly_pr[m][max(monthly_pr[m], key=lambda pr: monthly_pr[m][pr]['profit'])]['profit']
             for m in months_sorted if monthly_pr[m]
@@ -1226,7 +1226,7 @@ if st.session_state.monthly_profile_results is not None:
         height=320, title="Zisk/hod [€] dle profilu a měsíce",
         xaxis_title="Měsíc", yaxis_title="Profil"
     )
-    st.plotly_chart(fig_heat, use_container_width=True)
+    st.plotly_chart(fig_heat, width='stretch')
 
     # ── Sezónní strategie ──────────────────────────
     st.divider()
@@ -1238,7 +1238,7 @@ if st.session_state.monthly_profile_results is not None:
                 'Celkový zisk [€]': f"{r['total_profit']:,.0f}",
                 'Průměr CO₂/měsíc [tCO₂]': f"{r['avg_co2']:,.1f}" if r['avg_co2'] is not None else '–'}
                for r in q_rows]
-        st.dataframe(pd.DataFrame(tbl), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(tbl), width='stretch', hide_index=True)
         narrative = " | ".join(
             f"{r['quarter'].split()[0]}: **{r['best_profile'].upper()}**" for r in q_rows)
         st.info(f"Doporučená strategie: {narrative}")
@@ -1365,7 +1365,7 @@ if st.session_state.monthly_profile_results is not None:
         fig_ap.add_trace(go.Scatter(x=res_ap['Čas'], y=res_ap['Poptávka tepla [MW]'] * p['h_cover'],
             name='Cílová poptávka', mode='lines', line=dict(color='black', width=2, dash='dot')))
         fig_ap.update_layout(height=420, hovermode='x unified')
-        st.plotly_chart(fig_ap, use_container_width=True)
+        st.plotly_chart(fig_ap, width='stretch')
 
         # Graf – kumulativní zisk
         st.markdown("#### 💰 Kumulativní zisk (kombinovaný plán)")
@@ -1376,7 +1376,7 @@ if st.session_state.monthly_profile_results is not None:
             line_color='#27ae60', name='Kum. zisk'
         ))
         fig_ap2.update_layout(height=300, hovermode='x unified')
-        st.plotly_chart(fig_ap2, use_container_width=True)
+        st.plotly_chart(fig_ap2, width='stretch')
 
         # Download kombinovaného plánu
         skip_cols_ap = {'Měsíc', 'Hodina dne', 'KGJ on', 'KGJ stop', 'Kotel on', 'Import tepla on'}
@@ -1434,7 +1434,7 @@ if st.session_state.scenario_results is not None:
 
     # Comparison Table
     comparison_df = create_scenario_comparison_df(scenarios)
-    st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+    st.dataframe(comparison_df, width='stretch', hide_index=True)
     
     # Metric Comparison Charts
     col_chart_1, col_chart_2 = st.columns(2)
@@ -1479,7 +1479,7 @@ if st.session_state.scenario_results is not None:
                 yaxis2=dict(title="Stabilita [%]", overlaying='y', side='right'),
                 hovermode='x unified'
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
     
     with col_chart_2:
         st.markdown("**Charakteristiky Provozu**")
@@ -1521,7 +1521,7 @@ if st.session_state.scenario_results is not None:
                 yaxis2=dict(title="Avg Runtime [h]", overlaying='y', side='right'),
                 hovermode='x unified'
             )
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width='stretch')
 
     # ── Breakdown příjmů a nákladů ──
     st.markdown("**Breakdown příjmů a nákladů dle profilu**")
@@ -1560,7 +1560,7 @@ if st.session_state.scenario_results is not None:
             yaxis_title="k€", hovermode='x unified',
             legend=dict(orientation='h', yanchor='bottom', y=1.02)
         )
-        st.plotly_chart(fig_bd, use_container_width=True)
+        st.plotly_chart(fig_bd, width='stretch')
 
     # ── Waterfall – rozkad zisku per profil ──────────────────────────
     if breakdown_data:
@@ -1601,7 +1601,7 @@ if st.session_state.scenario_results is not None:
                 margin=dict(l=10, r=10, t=50, b=10),
             )
             with wf_cols[col_idx]:
-                st.plotly_chart(fig_wf, use_container_width=True, key=f"wf_{row['Profil'].lower()}")
+                st.plotly_chart(fig_wf, width='stretch', key=f"wf_{row['Profil'].lower()}")
 
     # ── Detailní view – záložka per profil ──────────────────────────
     st.divider()
@@ -1691,7 +1691,7 @@ if st.session_state.scenario_results is not None:
                 fig.add_trace(go.Scatter(x=res['Čas'], y=res['Poptávka tepla [MW]']*p['h_cover'],
                     name='Cílová poptávka', mode='lines', line=dict(color='black', width=2, dash='dot')))
                 fig.update_layout(height=450, hovermode='x unified')
-                st.plotly_chart(fig, use_container_width=True, key=f"teplo_{pr}")
+                st.plotly_chart(fig, width='stretch', key=f"teplo_{pr}")
 
                 st.markdown("#### ⚡ Bilance Elektřiny")
                 fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
@@ -1714,7 +1714,7 @@ if st.session_state.scenario_results is not None:
                         fig.add_trace(go.Scatter(x=res['Čas'], y=-res[col], name=name,
                             stackgroup='spotreba', fillcolor=color), row=2, col=1)
                 fig.update_layout(height=600, hovermode='x unified')
-                st.plotly_chart(fig, use_container_width=True, key=f"ee_{pr}")
+                st.plotly_chart(fig, width='stretch', key=f"ee_{pr}")
 
                 st.markdown("#### 💰 Kumulativní Zisk v Čase")
                 _pr_color = PROFILE_COLORS.get(pr, '#27ae60')
@@ -1725,7 +1725,7 @@ if st.session_state.scenario_results is not None:
                     fill='tozeroy', fillcolor=f'rgba({_pr_r},{_pr_g},{_pr_b},0.2)',
                     line_color=_pr_color, name='Kum. zisk'))
                 fig.update_layout(height=350, hovermode='x unified')
-                st.plotly_chart(fig, use_container_width=True, key=f"kum_{pr}")
+                st.plotly_chart(fig, width='stretch', key=f"kum_{pr}")
 
     # ── Download scénářů ──
     st.divider()
@@ -1814,7 +1814,7 @@ if st.session_state.scenario_results is not None:
             height=250, title="Tornádo chart – rozsah zisku dle cenové změny",
             xaxis_title="Zisk [k€]", showlegend=False, bargap=0.4
         )
-        st.plotly_chart(fig_t, use_container_width=True)
+        st.plotly_chart(fig_t, width='stretch')
 
         # Detailní tabulka
         st.dataframe(
@@ -1822,7 +1822,7 @@ if st.session_state.scenario_results is not None:
                 'typ': 'Parametr', 'delta': 'Δ cena [€/MWh]',
                 'profit': 'Zisk [€]', 'delta_pct': 'Změna [%]'
             }).round(2),
-            use_container_width=True, hide_index=True
+            width='stretch', hide_index=True
         )
 
         if st.button("📦 Připravit Excel citlivostní analýzy ke stažení", key="prep_sensitivity"):
