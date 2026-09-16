@@ -1,0 +1,12 @@
+# Konfigurace pro lokalni beh (Windows bez prav spravce i jinde).
+#
+# address = "localhost" je tu to podstatne: ve vychozim stavu Streamlit nasloucha
+# na vsech rozhranich a Windows na to vyhodi dialog firewallu, jehoz schvaleni
+# vyzaduje prava spravce. Vazba na loopback dialog vubec nevyvola.
+[server]
+address = "localhost"
+port = 8501
+
+# Bez telemetrie - v podnikove siti by chodila pres proxy a nema tu co delat.
+[browser]
+gatherUsageStats = false

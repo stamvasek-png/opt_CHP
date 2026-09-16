@@ -1,4 +1,5 @@
 import io
+import os
 import re
 import pickle
 from pathlib import Path
@@ -11,7 +12,10 @@ from datetime import datetime, timedelta
 
 st.set_page_config(page_title="KGJ Strategy Expert PRO", layout="wide")
 
-CACHE_DIR  = Path(__file__).parent / 'cache'
+# Data drzime mimo slozku s kodem, aby je aktualizace (robocopy /MIR) nesmazala.
+# Bez promenne se chova jako driv - cache vedle app.py.
+_data_dir  = os.environ.get('OPT_CHP_DATA_DIR')
+CACHE_DIR  = Path(_data_dir) if _data_dir else Path(__file__).parent / 'cache'
 CACHE_FILE = CACHE_DIR / 'last_run.pkl'
 CACHE_KEYS = [
     'scenario_results', 'monthly_profile_results', 'annual_plan_result',
