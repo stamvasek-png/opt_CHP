@@ -1,25 +1,60 @@
 @echo off
 rem ---------------------------------------------------------------
-rem opt_CHP - aktualizace z rozbaleneho ZIPu.
+rem opt_CHP - aktualizace ze stazeneho ZIPu.
 rem
-rem POZOR: tento skript musi lezet MIMO aktualizovanou slozku, jinak by
-rem se prepsal sam za behu a cmd by se na tom rozsypal. Zkopiruj ho do
-rem %LOCALAPPDATA%\py\ a poustej odtamtud.
+rem Staci dvojklik: skript si najde nejnovejsi opt_CHP-*.zip ve slozce
+rem Stazene soubory, rozbali ho a po potvrzeni prepise slozku s kodem.
 rem
-rem Pouziti:  update_opt_chp.bat "cesta\k\rozbalene\slozce"
+rem Volitelne jde predat cestu k uz rozbalene slozce:
+rem   update_opt_chp.bat "cesta\k\rozbalene\slozce"
+rem
+rem POZOR: skript musi lezet MIMO aktualizovanou slozku, jinak by se
+rem prepsal sam za behu a cmd by se na tom rozsypal. Patri do
+rem %LOCALAPPDATA%\py\ - kopie z repozitare skonci v opt_chp\windows\,
+rem coz je jiny soubor, takze si nelezou do cesty.
 rem ---------------------------------------------------------------
 setlocal
-set "SRC=%~1"
 if not defined OPT_CHP_HOME set "OPT_CHP_HOME=%LOCALAPPDATA%\py\opt_chp"
+set "DL=%USERPROFILE%\Downloads"
+set "WORK=%LOCALAPPDATA%\py\_opt_chp_update"
 set "STAMP=%OPT_CHP_HOME%\.venv\install_ok.txt"
 set "OLDLOCK=%TEMP%\opt_chp_lock_old.txt"
+set "SRC=%~1"
+set "ZIP="
 
-if "%SRC%"=="" goto usage
-if not exist "%SRC%\app.py" goto badsrc
 if not exist "%OPT_CHP_HOME%\app.py" goto baddest
+if not "%SRC%"=="" goto havesrc
 
+rem --- Najdi nejnovejsi ZIP (dir /o-d radi od nejnovejsiho) ---
+for /f "delims=" %%F in ('dir /b /o-d "%DL%\opt_CHP-*.zip" 2^>nul') do (
+    set "ZIP=%DL%\%%F"
+    goto gotzip
+)
+goto nozip
+
+:gotzip
+echo [opt_chp] ZIP: %ZIP%
+echo [opt_chp] Cil: %OPT_CHP_HOME%
+echo.
+set "ANS="
+set /p ANS=Prepsat slozku s kodem? [A/N] 
+if /i not "%ANS%"=="A" goto cancelled
+
+rem --- Rozbal do docasne slozky ---
+if exist "%WORK%" rd /s /q "%WORK%"
+mkdir "%WORK%"
+echo.
+echo [opt_chp] Rozbaluji...
+tar -xf "%ZIP%" -C "%WORK%"
+if errorlevel 1 goto untarfail
+
+rem V ZIPu je jedna slozka, jmenuje se podle vetve (opt_CHP-main apod.)
+for /d %%D in ("%WORK%\*") do set "SRC=%%D"
+if not exist "%SRC%\app.py" goto badzip
+
+:havesrc
+if not exist "%SRC%\app.py" goto badsrc
 echo [opt_chp] Zdroj: %SRC%
-echo [opt_chp] Cil:   %OPT_CHP_HOME%
 echo.
 
 rem Stary lockfile si odlozime, at pozname zmenu zavislosti.
@@ -34,30 +69,65 @@ if errorlevel 8 goto failed
 rem Zmenil-li se lockfile, zrusime znamku - balicky se pri startu doinstaluji.
 fc "%OLDLOCK%" "%OPT_CHP_HOME%\requirements-lock.txt" >nul 2>&1
 if errorlevel 1 goto relock
+
+call :cleanup
 echo.
-echo [opt_chp] Hotovo, zavislosti beze zmeny.
-goto :eof
+echo [opt_chp] Hotovo. Zavislosti se nezmenily.
+pause
+exit /b 0
 
 :relock
 if exist "%STAMP%" del "%STAMP%" >nul 2>&1
+call :cleanup
 echo.
-echo [opt_chp] Hotovo. Zavislosti se zmenily - pri pristim
-echo [opt_chp] spusteni se automaticky doinstaluji.
+echo [opt_chp] Hotovo. Zavislosti se zmenily - pri pristim spusteni
+echo [opt_chp] aplikace se automaticky doinstaluji.
+pause
+exit /b 0
+
+:cleanup
+if exist "%WORK%" rd /s /q "%WORK%" >nul 2>&1
 goto :eof
 
-:usage
-echo Pouziti: update_opt_chp.bat "cesta\k\rozbalene\slozce"
+:nozip
+echo [opt_chp] CHYBA: ve slozce Stazene soubory neni zadny opt_CHP-*.zip
+echo [opt_chp] Hledal jsem v: %DL%
+echo.
+echo [opt_chp] Stahni ZIP na GitHubu pres Code - Download ZIP a spust znovu.
+pause
+exit /b 1
+
+:cancelled
+echo.
+echo [opt_chp] Zruseno, nic se nezmenilo.
+pause
+exit /b 0
+
+:untarfail
+call :cleanup
+echo [opt_chp] CHYBA: ZIP se nepodarilo rozbalit.
+pause
+exit /b 1
+
+:badzip
+call :cleanup
+echo [opt_chp] CHYBA: v ZIPu neni app.py - je to spravny archiv?
+pause
 exit /b 1
 
 :badsrc
 echo [opt_chp] CHYBA: v "%SRC%" neni app.py - to neni slozka s projektem.
+pause
 exit /b 1
 
 :baddest
 echo [opt_chp] CHYBA: v "%OPT_CHP_HOME%" neni app.py.
-echo [opt_chp] Nastav OPT_CHP_HOME na spravnou slozku.
+echo [opt_chp] Nastav OPT_CHP_HOME na slozku s kodem.
+pause
 exit /b 1
 
 :failed
+call :cleanup
 echo [opt_chp] CHYBA: robocopy selhal.
+pause
 exit /b 1

@@ -69,15 +69,28 @@ Cache se drží **mimo složku s kódem**, aby ji aktualizace nesmazala. Když
 
 ### Aktualizace
 
-`windows/update_opt_chp.bat` zkopíruj **o úroveň výš**, mimo složku s kódem —
-dávkový soubor se nesmí přepsat sám za běhu. Pak:
+`windows/update_opt_chp.bat` zkopíruj **o úroveň výš**, do `%LOCALAPPDATA%\py\`
+— dávkový soubor se nesmí přepsat sám za běhu.
+
+Pak stačí stáhnout nový ZIP na GitHubu (**Code → Download ZIP**) a na skript
+**dvojkliknout**. Sám si najde nejnovější `opt_CHP-*.zip` ve složce Stažené
+soubory, rozbalí ho a zeptá se, než začne přepisovat:
 
 ```
-update_opt_chp.bat "cesta\k\nove\rozbalene\slozce"
+[opt_chp] ZIP: C:\Users\...\Downloads\opt_CHP-main.zip
+[opt_chp] Cil: C:\Users\...\AppData\Local\py\opt_chp
+Prepsat slozku s kodem? [A/N]
 ```
 
-Přepíše kód a nechá `.venv` být. Pokud se změnil `requirements-lock.txt`, zruší
-značku o instalaci a balíčky se při dalším startu doinstalují samy.
+Kopíruje se přes `robocopy /MIR`, takže se v cíli smažou soubory, které v ZIPu
+nejsou — proto ten dotaz. `.venv` a `__pycache__` zůstávají nedotčené a data
+jsou stejně jinde (`OPT_CHP_DATA_DIR`). Pokud se změnil `requirements-lock.txt`,
+skript zruší značku o instalaci a balíčky se při dalším startu doinstalují samy.
+
+Když si ZIP rozbalíš sám, jde cesta předat jako parametr:
+`update_opt_chp.bat "cesta\k\slozce"`.
+
+Okno zůstane otevřené s výsledkem — a to i když něco selže.
 
 ### Za firemní proxy
 

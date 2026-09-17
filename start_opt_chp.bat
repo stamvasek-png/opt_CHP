@@ -34,7 +34,13 @@ echo [opt_chp] log: %LOG%
 echo.
 "%PY%" -m streamlit run app.py
 if errorlevel 1 goto norun
-goto :eof
+
+rem I uspesny konec ceka na klavesu - kdyby Streamlit skoncil hned,
+rem okno by jinak jen probliklo a uzivatel by nevedel proc.
+echo.
+echo [opt_chp] Streamlit skoncil.
+pause
+exit /b 0
 
 :nopython
 echo.
