@@ -194,3 +194,89 @@ def test_profile_pruning_does_not_change_result():
                  custom_hours=list(range(8, 20)))['res']
 
     assert kw_shape(peak) == kw_shape(free)
+
+# ── Oddělená rampa pro teplo a elektřinu ─────────────────────────────
+
+# Jednotka nastavená tak, aby jmenovity ELEKTRICKY vykon byl 975 kW —
+# tak si uzivatel jednotku odecita.
+ETA_TH, ETA_EL = 0.531, 0.395
+K_EL = 0.975
+K_TH_FOR_EL = K_EL * ETA_TH / ETA_EL
+
+
+def el_params(**over):
+    p = make_params(k_th=K_TH_FOR_EL, k_eff_th=ETA_TH, k_eff_el=ETA_EL, k_min=1.0)
+    p.update(over)
+    return p
+
+
+def test_ramp_shape_matches_real_data_electrical():
+    """Zlatý test na reálná data, tentokrát elektricky.
+
+    975 kW_el, nájezd 12,7 min a sjezd 8,9 min musí dát naměřený odečet.
+    """
+    res = solve(with_ramp(el_params(), 12.7, 8.9))['res']
+    ee_kw = [round(v * 1000) for v in res['EE z KGJ [MW]']]
+    assert ee_kw[1:5] == [872, 975, 975, 72]
+
+
+def test_thermal_tail_outlasts_electrical():
+    """S delší tepelnou rampou nese doběhová hodina víc tepla než elektřiny."""
+    # elektricky sjezd 9 min, tepelny 30 min (dochlazeni)
+    p = with_ramp(el_params(), 12.7, 9.0, th_up_min=30.0, th_down_min=30.0)
+    res = solve(p)['res']
+    tail = 4
+
+    el_frac = res['EE z KGJ [MW]'][tail] / K_EL
+    th_frac = res['KGJ [MW_th]'][tail] / K_TH_FOR_EL
+
+    assert el_frac == pytest.approx(9.0 / 120.0, rel=1e-6)
+    assert th_frac == pytest.approx(30.0 / 120.0, rel=1e-6)
+    assert th_frac > el_frac * 3, "tepelny dobeh ma byt vyrazne delsi"
+
+
+def test_gas_follows_electrical_ramp():
+    """Plyn jde s motorem, ne s teplem — jádro celé změny.
+
+    V doběhové hodině se dodá zbytkové teplo z bloku, které už žádné palivo
+    nespotřebovává, takže poměr plynu musí sedět na elektrickou rampu.
+    """
+    a_dn_el, a_dn_th = 9.0 / 120.0, 30.0 / 120.0
+    p = with_ramp(el_params(), 12.7, 9.0, th_up_min=30.0, th_down_min=30.0)
+    res = solve(p)['res']
+    tail, last_on = 4, 3
+
+    gas_full = res['Plyn KGJ [MWh]'][last_on]
+    gas_tail = res['Plyn KGJ [MWh]'][tail]
+
+    assert gas_tail / gas_full == pytest.approx(a_dn_el, rel=1e-6)
+    assert gas_tail / gas_full != pytest.approx(a_dn_th, rel=1e-3)
+    # a teplo v te hodine je naopak podle tepelne rampy
+    assert res['KGJ [MW_th]'][tail] / res['KGJ [MW_th]'][last_on] == pytest.approx(
+        a_dn_th, rel=1e-6)
+
+
+def test_thermal_split_off_is_previous_behaviour():
+    """Bez zapnutého rozlišení se teplo i elektřina deratují stejně."""
+    res = solve(with_ramp(el_params(), 12.7, 8.9))['res']
+    for t in (1, 4):
+        el = res['EE z KGJ [MW]'][t] / res['EE z KGJ setpoint [MW]'].max()
+        th = res['KGJ [MW_th]'][t] / res['KGJ setpoint [MW_th]'].max()
+        assert el == pytest.approx(th, rel=1e-9)
+
+
+def test_ramp_parts_sum_up():
+    """setpoint − ztráta + doběh musí dát skutečnou hodnotu, u obou veličin."""
+    p = with_ramp(el_params(), 12.7, 9.0, th_up_min=25.0, th_down_min=25.0)
+    res = solve(p)['res']
+
+    ee = (res['EE z KGJ setpoint [MW]'] - res['EE z KGJ nájezd ztráta [MW]']
+          + res['EE z KGJ doběh [MW]'])
+    th = (res['KGJ setpoint [MW_th]'] - res['KGJ nájezd ztráta [MW_th]']
+          + res['KGJ doběh [MW_th]'])
+
+    assert ee.values == pytest.approx(res['EE z KGJ [MW]'].values, abs=1e-9)
+    assert th.values == pytest.approx(res['KGJ [MW_th]'].values, abs=1e-9)
+    # a ztrata/dobeh jsou nenulove tam, kde maji byt
+    assert res['EE z KGJ nájezd ztráta [MW]'][1] > 0
+    assert res['EE z KGJ doběh [MW]'][4] > 0

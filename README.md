@@ -101,10 +101,46 @@ Volitelně (záložka **Technika** → *Modelovat nájezd / sjezd KGJ*) model ro
 náběh a odstavení do hodinového průměru. Lineární rampa délky τ minut znamená, že
 hodina startu dodá `P·(1 − τ/120)` a hodina po vypnutí ještě `P·(τ/120)`.
 
-Pro 975 kW jednotku s nájezdem 12,7 min a sjezdem 8,9 min vyjde typický tříhodinový
-běh jako `872 / 975 / 975 / 72` kW — poslední hodnota padá do hodiny, kdy je jednotka
-už formálně vypnutá. Teplo, elektřina i plyn se deratují stejným faktorem, takže se
-během rampy nemění účinnost; náklad na start pokrývá samostatný parametr
+Pro jednotku 975 kW_el s nájezdem 12,7 min a sjezdem 8,9 min vyjde typický
+tříhodinový běh jako `872 / 975 / 975 / 72` kW — poslední hodnota padá do hodiny,
+kdy je jednotka už formálně vypnutá. Náklad na start pokrývá samostatný parametr
 `Náklady na start [€/start]`.
 
 Rampa je omezená na 0–60 min, aby se nikdy nerozlila do další hodiny.
+
+### τ jsou ekvivalentní minuty, ne strmost
+
+V hodinovém průměru **nejde odlišit mrtvou dobu od pomalejší rampy** — záleží jen
+na tom, kolik minut plného výkonu celkem chybí. Mrtvá doba *d* plus rampa *r* dá
+stejný průměr jako lineární rampa délky `2d + r`. Doba, než se generátor
+synchronizuje na síť, se tím schová do τ a nepotřebuje vlastní parametr.
+
+### Teplo se chová jinak než elektřina
+
+| Fáze | Elektřina | Plyn | Teplo |
+|---|---|---|---|
+| Start | nic, dokud se generátor nesynchronizuje, pak najíždí | teče od první zážehy | vzniká hned, ale nejdřív ohřívá blok a výměník |
+| Odstavení | řízené odlehčení, pak vypínač — končí rychle | končí s motorem | dochlazení 5–15 min, čerpadla dál tlačí zbytkové teplo do sítě |
+
+Proto lze zaškrtnout *Tepelná rampa se liší od elektrické* a zadat pro teplo
+vlastní dvojici τ. **Plyn sleduje vždy elektřinu**, protože palivo jde do motoru
+a motor točí generátorem. Prakticky to znamená, že v doběhové hodině se dodá
+teplo téměř bez plynu — je to energie uložená v hmotě motoru, ne spálené palivo.
+
+Bez zaškrtnutí sleduje teplo elektřinu a model se chová jako před rozdělením.
+
+**Pozor při zadávání:** náběh a sjezd tepla by měly vyjít zhruba stejně, protože
+je to tatáž energie — nejdřív se uloží do hmoty motoru, pak se vrátí. Výrazně
+delší tepelný sjezd než náběh znamená, že model dostává teplo zadarmo. Model to
+nezakazuje, může to mít důvod, ale je dobré o tom vědět.
+
+### Sloupce ve výsledcích
+
+Pro teplo i elektřinu je k dispozici rozpad `setpoint − ztráta nájezdem + doběh`:
+
+| Teplo | Elektřina |
+|---|---|
+| `KGJ setpoint [MW_th]` | `EE z KGJ setpoint [MW]` |
+| `KGJ nájezd ztráta [MW_th]` | `EE z KGJ nájezd ztráta [MW]` |
+| `KGJ doběh [MW_th]` | `EE z KGJ doběh [MW]` |
+| `KGJ [MW_th]` | `EE z KGJ [MW]` |

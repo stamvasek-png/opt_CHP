@@ -252,8 +252,12 @@ def build_parameters_df(params, uses):
         add('KGJ', 'Min. doba běhu [hod]', p.get('k_min_runtime', 0))
         add('KGJ', 'Servisní náklad [€/h provozu]', p.get('k_service_cost', 0))
         if p.get('kgj_ramp_on'):
-            add('KGJ', 'Doba nájezdu [min]', p.get('k_ramp_up_min', 0))
-            add('KGJ', 'Doba sjezdu [min]', p.get('k_ramp_down_min', 0))
+            add('KGJ', 'Doba nájezdu — elektřina [min]', p.get('k_ramp_up_el_min', 0))
+            add('KGJ', 'Doba sjezdu — elektřina [min]', p.get('k_ramp_down_el_min', 0))
+            add('KGJ', 'Doba nájezdu — teplo [min]', p.get('k_ramp_up_th_min', 0))
+            add('KGJ', 'Doba sjezdu — teplo [min]', p.get('k_ramp_down_th_min', 0))
+            add('KGJ', 'Tepelná rampa oddělená od elektrické',
+                'ANO' if p.get('kgj_ramp_th_split') else 'NE')
         if p.get('kgj_var_eff'):
             add('KGJ', 'η_th při min. zátěži [-]', p.get('eta_th_min', '–'))
             add('KGJ', 'η_el při min. zátěži [-]', p.get('eta_el_min', '–'))
@@ -481,7 +485,7 @@ with st.sidebar:
             st.caption(f"💾 Cache: poslední běh {_ts}")
         except Exception:
             st.caption("💾 Cache: dostupná")
-        if st.button("🗑️ Vyčistit cache výsledků", use_container_width=True):
+        if st.button("🗑️ Vyčistit cache výsledků", width='stretch'):
             clear_cache()
             st.rerun()
     else:
@@ -645,7 +649,7 @@ if st.session_state.fwd_data is not None:
             fig.add_hline(y=st.session_state.ee_new, line_dash="dash", line_color="#27ae60",
                 annotation_text=f"Nový průměr {st.session_state.ee_new:.1f}")
             fig.update_layout(height=340, hovermode='x unified', margin=dict(t=30))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         with tab_gas:
             fig = go.Figure()
             fig.add_trace(go.Scatter(x=df_fwd['datetime'], y=df_fwd['gas_original'],
@@ -657,7 +661,7 @@ if st.session_state.fwd_data is not None:
             fig.add_hline(y=st.session_state.gas_new, line_dash="dash", line_color="#e67e22",
                 annotation_text=f"Nový průměr {st.session_state.gas_new:.1f}")
             fig.update_layout(height=340, hovermode='x unified', margin=dict(t=30))
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
         with tab_dur:
             ee_s  = df_fwd['ee_price'].sort_values(ascending=False).values
             gas_s = df_fwd['gas_price'].sort_values(ascending=False).values
@@ -673,7 +677,7 @@ if st.session_state.fwd_data is not None:
             fig.update_xaxes(title_text="Hodiny [h]")
             fig.update_yaxes(title_text="€/MWh")
             fig.update_layout(height=340, showlegend=False)
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
 
 # ────────────────────────────────────────────────
 # PARAMETRY
@@ -721,25 +725,69 @@ with t_tech:
                  "méně než plný výkon, hodina po vypnutí ještě nese doběh. "
                  "Metriky 'Provozní hodiny KGJ' dál počítají jen nasazené hodiny, bez doběhů.")
         if p['kgj_ramp_on']:
+            st.caption("Doba se zadává jako **ekvivalentní minuty rampy** — v hodinovém "
+                       "průměru nejde odlišit mrtvou dobu (u elektřiny synchronizace "
+                       "generátoru) od pomalejší rampy.")
             cr1, cr2 = st.columns(2)
             with cr1:
-                p['k_ramp_up_min'] = st.number_input(
-                    "Doba nájezdu [min]", value=10.0, min_value=0.0, max_value=60.0, step=1.0,
-                    help="Doba od startu do dosažení nasazeného výkonu (lineární rampa). "
+                p['k_ramp_up_el_min'] = st.number_input(
+                    "Nájezd — elektřina [min]", value=10.0,
+                    min_value=0.0, max_value=60.0, step=0.1,
+                    help="Od startu motoru do dosažení nasazeného výkonu, včetně doby, "
+                         "než se generátor synchronizuje na síť. "
                          "Max. 60 min — delší rampa by se rozlila do další hodiny.")
             with cr2:
-                p['k_ramp_down_min'] = st.number_input(
-                    "Doba sjezdu [min]", value=10.0, min_value=0.0, max_value=60.0, step=1.0,
-                    help="Doba od povelu k odstavení do nulového výkonu. Doběh spadne "
+                p['k_ramp_down_el_min'] = st.number_input(
+                    "Sjezd — elektřina [min]", value=10.0,
+                    min_value=0.0, max_value=60.0, step=0.1,
+                    help="Řízené odlehčení než se otevře vypínač. Doběh spadne "
                          "do hodiny po posledním provozním slotu.")
-            _a_up = p['k_ramp_up_min'] / 120.0
-            _a_dn = p['k_ramp_down_min'] / 120.0
-            st.caption(f"ℹ️ První hodina běhu: **{(1-_a_up)*100:.1f} %** "
-                       f"({(1-_a_up)*p['k_th']:.3f} MW_th) | "
-                       f"Hodina po vypnutí: **{_a_dn*100:.1f} %** "
-                       f"({_a_dn*p['k_th']:.3f} MW_th)")
+
+            # Teplo se chová jinak: vzniká hned při zážehu, ale nejdřív ohřívá blok
+            # a výměník, a po odstavení ho dochlazení tlačí do sítě ještě dlouho
+            # potom, co se motor zastavil.
+            p['kgj_ramp_th_split'] = st.checkbox(
+                "Tepelná rampa se liší od elektrické", value=False,
+                help="Teplo má vlastní dynamiku — dochlazení po odstavení bývá výrazně "
+                     "delší než elektrický sjezd a nestojí žádný plyn. Bez zaškrtnutí "
+                     "sleduje teplo elektřinu. Plyn jde vždy s motorem, tedy s elektřinou.")
+            if p['kgj_ramp_th_split']:
+                ct1, ct2 = st.columns(2)
+                with ct1:
+                    p['k_ramp_up_th_min'] = st.number_input(
+                        "Nájezd — teplo [min]", value=float(p['k_ramp_up_el_min']),
+                        min_value=0.0, max_value=60.0, step=0.1,
+                        help="Teplo jde nejdřív do ohřevu bloku a výměníku, takže "
+                             "užitečný výkon náběhá pomaleji než elektrický.")
+                with ct2:
+                    p['k_ramp_down_th_min'] = st.number_input(
+                        "Sjezd — teplo [min]", value=float(p['k_ramp_down_el_min']),
+                        min_value=0.0, max_value=60.0, step=0.1,
+                        help="Dochlazení — čerpadla tlačí zbytkové teplo z bloku do sítě "
+                             "ještě 5–15 min po zastavení motoru.")
+                st.caption("⚠️ Náběh a sjezd tepla by měly vyjít **zhruba stejně** — je to "
+                           "tatáž energie, co se nejdřív uloží do hmoty motoru a pak se "
+                           "vrátí. Výrazně delší sjezd než náběh znamená teplo zadarmo.")
+            else:
+                p['k_ramp_up_th_min'] = p['k_ramp_up_el_min']
+                p['k_ramp_down_th_min'] = p['k_ramp_down_el_min']
+
+            _a_up_el = p['k_ramp_up_el_min'] / 120.0
+            _a_dn_el = p['k_ramp_down_el_min'] / 120.0
+            _a_up_th = p['k_ramp_up_th_min'] / 120.0
+            _a_dn_th = p['k_ramp_down_th_min'] / 120.0
+            st.caption(
+                f"ℹ️ Elektřina — první hodina: **{(1-_a_up_el)*100:.1f} %** "
+                f"({(1-_a_up_el)*k_el_derived:.3f} MW_el) · "
+                f"po vypnutí: **{_a_dn_el*100:.1f} %** ({_a_dn_el*k_el_derived:.3f} MW_el)")
+            st.caption(
+                f"ℹ️ Teplo — první hodina: **{(1-_a_up_th)*100:.1f} %** "
+                f"({(1-_a_up_th)*p['k_th']:.3f} MW_th) · "
+                f"po vypnutí: **{_a_dn_th*100:.1f} %** ({_a_dn_th*p['k_th']:.3f} MW_th)")
         else:
-            p['k_ramp_up_min'] = p['k_ramp_down_min'] = 0.0
+            p['kgj_ramp_th_split'] = False
+            p['k_ramp_up_el_min'] = p['k_ramp_down_el_min'] = 0.0
+            p['k_ramp_up_th_min'] = p['k_ramp_down_th_min'] = 0.0
         # Roční limit hodin
         p['kgj_hour_limit_on'] = st.checkbox("Omezit max. počet provozních hodin KGJ / rok", value=False)
         if p['kgj_hour_limit_on']:
@@ -1203,7 +1251,7 @@ if st.session_state.monthly_profile_results is not None:
 
     if best_rows:
         df_best = pd.DataFrame(best_rows)
-        st.dataframe(df_best, use_container_width=True, hide_index=True)
+        st.dataframe(df_best, width='stretch', hide_index=True)
         total_opt = sum(
             monthly_pr[m][max(monthly_pr[m], key=lambda pr: monthly_pr[m][pr]['profit'])]['profit']
             for m in months_sorted if monthly_pr[m]
@@ -1226,7 +1274,7 @@ if st.session_state.monthly_profile_results is not None:
         height=320, title="Zisk/hod [€] dle profilu a měsíce",
         xaxis_title="Měsíc", yaxis_title="Profil"
     )
-    st.plotly_chart(fig_heat, use_container_width=True)
+    st.plotly_chart(fig_heat, width='stretch')
 
     # ── Sezónní strategie ──────────────────────────
     st.divider()
@@ -1238,7 +1286,7 @@ if st.session_state.monthly_profile_results is not None:
                 'Celkový zisk [€]': f"{r['total_profit']:,.0f}",
                 'Průměr CO₂/měsíc [tCO₂]': f"{r['avg_co2']:,.1f}" if r['avg_co2'] is not None else '–'}
                for r in q_rows]
-        st.dataframe(pd.DataFrame(tbl), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(tbl), width='stretch', hide_index=True)
         narrative = " | ".join(
             f"{r['quarter'].split()[0]}: **{r['best_profile'].upper()}**" for r in q_rows)
         st.info(f"Doporučená strategie: {narrative}")
@@ -1365,7 +1413,7 @@ if st.session_state.monthly_profile_results is not None:
         fig_ap.add_trace(go.Scatter(x=res_ap['Čas'], y=res_ap['Poptávka tepla [MW]'] * p['h_cover'],
             name='Cílová poptávka', mode='lines', line=dict(color='black', width=2, dash='dot')))
         fig_ap.update_layout(height=420, hovermode='x unified')
-        st.plotly_chart(fig_ap, use_container_width=True)
+        st.plotly_chart(fig_ap, width='stretch')
 
         # Graf – kumulativní zisk
         st.markdown("#### 💰 Kumulativní zisk (kombinovaný plán)")
@@ -1376,7 +1424,7 @@ if st.session_state.monthly_profile_results is not None:
             line_color='#27ae60', name='Kum. zisk'
         ))
         fig_ap2.update_layout(height=300, hovermode='x unified')
-        st.plotly_chart(fig_ap2, use_container_width=True)
+        st.plotly_chart(fig_ap2, width='stretch')
 
         # Download kombinovaného plánu
         skip_cols_ap = {'Měsíc', 'Hodina dne', 'KGJ on', 'KGJ stop', 'Kotel on', 'Import tepla on'}
@@ -1434,7 +1482,7 @@ if st.session_state.scenario_results is not None:
 
     # Comparison Table
     comparison_df = create_scenario_comparison_df(scenarios)
-    st.dataframe(comparison_df, use_container_width=True, hide_index=True)
+    st.dataframe(comparison_df, width='stretch', hide_index=True)
     
     # Metric Comparison Charts
     col_chart_1, col_chart_2 = st.columns(2)
@@ -1479,7 +1527,7 @@ if st.session_state.scenario_results is not None:
                 yaxis2=dict(title="Stabilita [%]", overlaying='y', side='right'),
                 hovermode='x unified'
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width='stretch')
     
     with col_chart_2:
         st.markdown("**Charakteristiky Provozu**")
@@ -1521,7 +1569,7 @@ if st.session_state.scenario_results is not None:
                 yaxis2=dict(title="Avg Runtime [h]", overlaying='y', side='right'),
                 hovermode='x unified'
             )
-            st.plotly_chart(fig2, use_container_width=True)
+            st.plotly_chart(fig2, width='stretch')
 
     # ── Breakdown příjmů a nákladů ──
     st.markdown("**Breakdown příjmů a nákladů dle profilu**")
@@ -1560,7 +1608,7 @@ if st.session_state.scenario_results is not None:
             yaxis_title="k€", hovermode='x unified',
             legend=dict(orientation='h', yanchor='bottom', y=1.02)
         )
-        st.plotly_chart(fig_bd, use_container_width=True)
+        st.plotly_chart(fig_bd, width='stretch')
 
     # ── Waterfall – rozkad zisku per profil ──────────────────────────
     if breakdown_data:
@@ -1601,7 +1649,7 @@ if st.session_state.scenario_results is not None:
                 margin=dict(l=10, r=10, t=50, b=10),
             )
             with wf_cols[col_idx]:
-                st.plotly_chart(fig_wf, use_container_width=True, key=f"wf_{row['Profil'].lower()}")
+                st.plotly_chart(fig_wf, width='stretch', key=f"wf_{row['Profil'].lower()}")
 
     # ── Detailní view – záložka per profil ──────────────────────────
     st.divider()
@@ -1691,7 +1739,7 @@ if st.session_state.scenario_results is not None:
                 fig.add_trace(go.Scatter(x=res['Čas'], y=res['Poptávka tepla [MW]']*p['h_cover'],
                     name='Cílová poptávka', mode='lines', line=dict(color='black', width=2, dash='dot')))
                 fig.update_layout(height=450, hovermode='x unified')
-                st.plotly_chart(fig, use_container_width=True, key=f"teplo_{pr}")
+                st.plotly_chart(fig, width='stretch', key=f"teplo_{pr}")
 
                 st.markdown("#### ⚡ Bilance Elektřiny")
                 fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
@@ -1714,7 +1762,7 @@ if st.session_state.scenario_results is not None:
                         fig.add_trace(go.Scatter(x=res['Čas'], y=-res[col], name=name,
                             stackgroup='spotreba', fillcolor=color), row=2, col=1)
                 fig.update_layout(height=600, hovermode='x unified')
-                st.plotly_chart(fig, use_container_width=True, key=f"ee_{pr}")
+                st.plotly_chart(fig, width='stretch', key=f"ee_{pr}")
 
                 st.markdown("#### 💰 Kumulativní Zisk v Čase")
                 _pr_color = PROFILE_COLORS.get(pr, '#27ae60')
@@ -1725,7 +1773,7 @@ if st.session_state.scenario_results is not None:
                     fill='tozeroy', fillcolor=f'rgba({_pr_r},{_pr_g},{_pr_b},0.2)',
                     line_color=_pr_color, name='Kum. zisk'))
                 fig.update_layout(height=350, hovermode='x unified')
-                st.plotly_chart(fig, use_container_width=True, key=f"kum_{pr}")
+                st.plotly_chart(fig, width='stretch', key=f"kum_{pr}")
 
     # ── Download scénářů ──
     st.divider()
@@ -1814,7 +1862,7 @@ if st.session_state.scenario_results is not None:
             height=250, title="Tornádo chart – rozsah zisku dle cenové změny",
             xaxis_title="Zisk [k€]", showlegend=False, bargap=0.4
         )
-        st.plotly_chart(fig_t, use_container_width=True)
+        st.plotly_chart(fig_t, width='stretch')
 
         # Detailní tabulka
         st.dataframe(
@@ -1822,7 +1870,7 @@ if st.session_state.scenario_results is not None:
                 'typ': 'Parametr', 'delta': 'Δ cena [€/MWh]',
                 'profit': 'Zisk [€]', 'delta_pct': 'Změna [%]'
             }).round(2),
-            use_container_width=True, hide_index=True
+            width='stretch', hide_index=True
         )
 
         if st.button("📦 Připravit Excel citlivostní analýzy ke stažení", key="prep_sensitivity"):

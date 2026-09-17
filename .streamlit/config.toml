@@ -7,6 +7,10 @@
 address = "localhost"
 port = 8501
 
+# Bez vyzvy k zadani e-mailu pri prvnim spusteni - aplikace se pousti
+# dvojklikem a cekani na vstup v konzoli vypada jako zaseknuty start.
+showEmailPrompt = false
+
 # Bez telemetrie - v podnikove siti by chodila pres proxy a nema tu co delat.
 [browser]
 gatherUsageStats = false
