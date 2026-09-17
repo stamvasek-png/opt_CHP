@@ -38,7 +38,15 @@ echo [opt_chp] Cil: %OPT_CHP_HOME%
 echo.
 set "ANS="
 set /p ANS=Prepsat slozku s kodem? [A/N] 
-if /i not "%ANS%"=="A" goto cancelled
+rem Bereme A i Y - na ceske klavesnici clovek stejne casto napise "y".
+rem Prazdna odpoved (jen Enter) znamena ne, at je vychozi stav bezpecny.
+if /i "%ANS%"=="A" goto confirmed
+if /i "%ANS%"=="ANO" goto confirmed
+if /i "%ANS%"=="Y" goto confirmed
+if /i "%ANS%"=="YES" goto confirmed
+goto cancelled
+
+:confirmed
 
 rem --- Rozbal do docasne slozky ---
 if exist "%WORK%" rd /s /q "%WORK%"
@@ -99,7 +107,8 @@ exit /b 1
 
 :cancelled
 echo.
-echo [opt_chp] Zruseno, nic se nezmenilo.
+echo [opt_chp] Zruseno - slozka s kodem zustala nedotcena.
+echo [opt_chp] Aktualizace probehne, az odpovis A nebo Y.
 pause
 exit /b 0
 

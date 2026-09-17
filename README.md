@@ -82,6 +82,9 @@ soubory, rozbalí ho a zeptá se, než začne přepisovat:
 Prepsat slozku s kodem? [A/N]
 ```
 
+Potvrzuje se `A` nebo `Y` (na velikosti nezáleží, projde i `ano` / `yes`).
+Cokoli jiného včetně prostého Enteru aktualizaci zruší a nic nepřepíše.
+
 Kopíruje se přes `robocopy /MIR`, takže se v cíli smažou soubory, které v ZIPu
 nejsou — proto ten dotaz. `.venv` a `__pycache__` zůstávají nedotčené a data
 jsou stejně jinde (`OPT_CHP_DATA_DIR`). Pokud se změnil `requirements-lock.txt`,

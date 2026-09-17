@@ -94,3 +94,33 @@ def test_every_exit_path_pauses(bat):
         if 'pause' not in [x.strip() for x in lines[max(0, i - 6):i]]:
             problems.append(f'ř.{i + 1}: {stripped}')
     assert not problems, f'ukončení bez pause (okno zmizí): {problems}'
+
+def test_confirmation_accepts_what_the_prompt_offers():
+    """Prompt nabízí [A/N], takže A musí projít — a Y taky.
+
+    Uživatel napsal `y` a skript to vyhodnotil jako ne, protože se
+    porovnávalo jen s "A". Na české klávesnici je `y` naprosto přirozená
+    odpověď, takže obojí musí fungovat.
+    """
+    txt = _text(REPO / 'windows' / 'update_opt_chp.bat')
+    if 'set /p ANS' not in txt:
+        pytest.skip('skript se na nic neptá')
+
+    accepted = set(re.findall(r'if /i "%ANS%"=="(\w+)"', txt))
+    assert 'A' in accepted, 'A je v promptu nabízené, musí projít'
+    assert 'Y' in accepted, 'y je na české klávesnici přirozená odpověď'
+
+    # Prazdna odpoved (jen Enter) nesmi znamenat souhlas.
+    assert '' not in accepted
+
+
+def test_confirmation_has_a_reachable_yes_branch():
+    """Souhlas musí někam vést a odmítnutí musí končit v :cancelled."""
+    txt = _text(REPO / 'windows' / 'update_opt_chp.bat')
+    if 'set /p ANS' not in txt:
+        pytest.skip('skript se na nic neptá')
+
+    targets = set(re.findall(r'if /i "%ANS%"=="\w+" goto (\w+)', txt))
+    assert len(targets) == 1, f'souhlas má vést na jedno místo, vede na {targets}'
+    assert ':' + targets.pop() in txt.replace('\r\n', '\n')
+    assert 'goto cancelled' in txt
