@@ -140,6 +140,10 @@ from opt_core import (
 
 # Výchozí časový limit CBC na jeden běh solveru [s]. None = bez limitu.
 DEFAULT_SOLVER_TIME_LIMIT = 1200
+# Relativni mezera od optima, pri ktere solver skonci. Dokazovani
+# optimality je u rocni ulohy exponencialne drahe, zatimco 1 % je
+# hluboko pod nejistotou vstupnich cen.
+DEFAULT_SOLVER_GAP_REL = 0.01
 
 
 def create_scenario_comparison_df(scenarios):
@@ -778,6 +782,16 @@ with st.sidebar:
             "Časový limit solveru [min]", value=20, min_value=1,
             help="Limit na jeden běh solveru. Při vyčerpání vrátí CBC nejlepší nalezené "
                  "řešení; když nenajde žádné, profil se ohlásí jako nevyřešený.") * 60)
+
+    # Solver umi skoncit, jakmile je dost blizko optimu. Najit dobre reseni je
+    # rychle, dokazat ze lepsi neexistuje uz muze trvat radove dele.
+    solver_gap_pct = st.number_input(
+        "Tolerance od optima [%]", value=1.0, min_value=0.0, max_value=20.0, step=0.5,
+        help="Solver skončí, jakmile ví, že je blíž než tahle mezera k optimu. "
+             "Zrychlí to řádově, hlavně u ročních úloh s akumulací. "
+             "0 = dokazovat optimalitu (může trvat hodiny). "
+             "1 % je hluboko pod nejistotou vstupních cen.")
+    solver_gap_rel = solver_gap_pct / 100.0
     
 
 # ────────────────────────────────────────────────
@@ -1077,7 +1091,8 @@ with t_co2:
 
 def run_scenario_analysis(df, params, uses, profiles_to_run, custom_hours=None, 
                           period_start=None, period_end=None, max_starts_per_month=None,
-                          time_limit=DEFAULT_SOLVER_TIME_LIMIT):
+                          time_limit=DEFAULT_SOLVER_TIME_LIMIT,
+                          gap_rel=DEFAULT_SOLVER_GAP_REL):
     """
     Spusť optimalizaci pro všechny vybrané profily a vrať porovnání
     """
@@ -1108,7 +1123,7 @@ def run_scenario_analysis(df, params, uses, profiles_to_run, custom_hours=None,
                 custom_hours=profile_custom_hours,
                 max_starts_per_month=max_starts_per_month,
                 period_mask=period_mask,
-                time_limit=time_limit,
+                time_limit=time_limit, gap_rel=gap_rel,
             )
         except Exception as exc:
             st.error(f"❌ Profil {profile.upper()} – výjimka: {exc}")
@@ -1134,7 +1149,8 @@ def run_scenario_analysis(df, params, uses, profiles_to_run, custom_hours=None,
 
 def run_monthly_profile_analysis(df, params, uses, profiles_to_run,
                                   custom_hours=None, max_starts_per_month=None,
-                                  time_limit=DEFAULT_SOLVER_TIME_LIMIT):
+                                  time_limit=DEFAULT_SOLVER_TIME_LIMIT,
+                                  gap_rel=DEFAULT_SOLVER_GAP_REL):
     """
     Pro každý měsíc v datech × každý profil spustí optimalizaci.
     Každý měsíc je nezávislý (TES/BESS startuje od 50 % kapacity).
@@ -1160,7 +1176,7 @@ def run_monthly_profile_analysis(df, params, uses, profiles_to_run,
                     custom_hours=custom_hours if profile == 'custom' else None,
                     max_starts_per_month=max_starts_per_month,
                     period_mask=mask,
-                    time_limit=time_limit,
+                    time_limit=time_limit, gap_rel=gap_rel,
                 )
             except Exception as exc:
                 st.warning(f"⚠️ {MONTH_NAMES.get(month, month)} / {profile.upper()}: výjimka: {exc}")
@@ -1217,13 +1233,15 @@ def compute_quarterly_strategy(monthly_pr):
 # ────────────────────────────────────────────────
 
 def run_sensitivity_analysis(df, params, uses, profile_type, gas_range, ee_range, steps,
-                              custom_hours=None, time_limit=DEFAULT_SOLVER_TIME_LIMIT):
+                              custom_hours=None, time_limit=DEFAULT_SOLVER_TIME_LIMIT,
+                              gap_rel=DEFAULT_SOLVER_GAP_REL):
     """
     Variuje gas_delta a ee_delta symetricky okolo základní varianty.
     Vrátí DataFrame: typ | delta | profit | delta_pct
     """
     base = run_optimization_with_profile(df, params, uses, profile_type,
-                                          custom_hours=custom_hours, time_limit=time_limit)
+                                          custom_hours=custom_hours, time_limit=time_limit,
+                                          gap_rel=gap_rel)
     if base is None:
         return None
     base_profit = base['total_profit']
@@ -1237,7 +1255,7 @@ def run_sensitivity_analysis(df, params, uses, profile_type, gas_range, ee_range
     for gd in gas_vals:
         r = run_optimization_with_profile(df, params, uses, profile_type,
                                           gas_delta=gd, custom_hours=custom_hours,
-                                          time_limit=time_limit)
+                                          time_limit=time_limit, gap_rel=gap_rel)
         if r:
             rows.append({'typ': 'Cena plynu', 'delta': round(gd, 2),
                          'profit': r['total_profit'],
@@ -1246,7 +1264,7 @@ def run_sensitivity_analysis(df, params, uses, profile_type, gas_range, ee_range
     for ed in ee_vals:
         r = run_optimization_with_profile(df, params, uses, profile_type,
                                           ee_delta=ed, custom_hours=custom_hours,
-                                          time_limit=time_limit)
+                                          time_limit=time_limit, gap_rel=gap_rel)
         if r:
             rows.append({'typ': 'Cena EE', 'delta': round(ed, 2),
                          'profit': r['total_profit'],
@@ -1342,7 +1360,8 @@ if st.session_state.fwd_data is not None and loc_file is not None:
                 profiles_to_run=profiles_to_run,
                 custom_hours=_ch,
                 period_start=period_start, period_end=period_end,
-                max_starts_per_month=_ms, time_limit=solver_time_limit
+                max_starts_per_month=_ms, time_limit=solver_time_limit,
+                gap_rel=solver_gap_rel
             )
             if not scenarios:
                 st.error("❌ Žádný profil nebyl úspěšně vypočten. Zkontroluj parametry.")
@@ -1353,7 +1372,7 @@ if st.session_state.fwd_data is not None and loc_file is not None:
                 df=df, params=p, uses=uses,
                 profiles_to_run=profiles_to_run,
                 custom_hours=_ch, max_starts_per_month=_ms,
-                time_limit=solver_time_limit
+                time_limit=solver_time_limit, gap_rel=solver_gap_rel
             )
 
         st.session_state.scenario_results = scenarios
@@ -1497,7 +1516,8 @@ if st.session_state.monthly_profile_results is not None:
                     df=df_annual_src, params=p, uses=uses,
                     profile_type=best_pr,
                     custom_hours=custom_hours if best_pr == 'custom' else None,
-                    period_mask=mask, time_limit=solver_time_limit
+                    period_mask=mask, time_limit=solver_time_limit,
+                    gap_rel=solver_gap_rel
                 )
                 if r is not None:
                     frame = r['res'].copy()
@@ -2001,7 +2021,7 @@ if st.session_state.scenario_results is not None:
                 profile_type=sa_profile,
                 gas_range=sa_gas_range, ee_range=sa_ee_range, steps=sa_steps,
                 custom_hours=custom_hours if sa_profile == 'custom' else None,
-                time_limit=solver_time_limit
+                time_limit=solver_time_limit, gap_rel=solver_gap_rel
             )
         if sa_df is None:
             st.error("❌ Citlivostní analýza selhala.")

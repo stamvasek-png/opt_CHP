@@ -233,7 +233,8 @@ def get_kgj_fix_price(p, profile_type):
 
 def run_optimization_with_profile(df, params, uses, profile_type='free', custom_hours=None,
                                    ee_delta=0.0, gas_delta=0.0, h_price_override=None, 
-                                   time_limit=1200, max_starts_per_month=None, period_mask=None):
+                                   time_limit=1200, gap_rel=0.01,
+                                   max_starts_per_month=None, period_mask=None):
     """
     Enhanced solver s podporou KGJ scheduling profilů
     
@@ -599,7 +600,13 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         obj.append(revenue - costs)
 
     model += pulp.lpSum(obj)
-    status = model.solve(pulp.PULP_CBC_CMD(msg=0, timeLimit=time_limit))
+    # gap_rel rika CBC, jak blizko optimu staci dojit. Bez nej dokazuje
+    # optimalitu, coz je u rocni ulohy s akumulaci exponencialne drahe -
+    # najit dobre reseni je rychle, dokazat ze lepsi neexistuje uz ne.
+    # 1 % je hluboko pod nejistotou FWD krivky, ze ktere se pocita.
+    status = model.solve(pulp.PULP_CBC_CMD(
+        msg=0, timeLimit=time_limit,
+        gapRel=gap_rel if gap_rel else None))
     if status not in (1, 2):
         return None
 

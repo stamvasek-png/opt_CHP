@@ -111,6 +111,43 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 - Verze v `requirements-lock.txt` jsou ověřené. `requirements.txt` je volnější,
   ale drží `pulp<4` — v PuLP 4.0 mizí API, které model používá.
 
+## Rychlost solveru
+
+Roční úloha (8760 hodin) je pro CBC náročná a nejvíc na ní záleží, jestli je
+zapnutá **akumulace**. Naměřeno na profilu FREE s limitem 10 minut:
+
+| Technologie | Čas | Doběhlo samo? |
+|---|---|---|
+| jen KGJ + kotel | 141 s | ano |
+| \+ elektrokotel + FVE | 237 s | ano |
+| \+ nádrž (TES) | 644 s | ne, limit |
+| všechno včetně baterie | 666 s | ne, limit |
+
+Nádrž propojí stav nabití mezi všemi hodinami roku, takže se z úlohy stane
+jeden provázaný problém — a to je ten zlom. Profil FREE je navíc nejtěžší,
+protože nemá žádná profilová omezení a všech 8760 binárek zůstává volných.
+
+### Tolerance od optima
+
+V sidebaru je **„Tolerance od optima [%]"**, výchozí 1 %. Solver skončí, jakmile
+ví, že je blíž než tahle mezera k optimu.
+
+Rozdíl je zásadní: **najít dobré řešení je rychlé, dokázat že lepší neexistuje
+může trvat řádově déle.** Poslední desetina procenta obvykle spotřebuje víc času
+než prvních 99 %. U modelu, který stojí na odhadu FWD křivky, je přitom 1 %
+hluboko pod nejistotou vstupů — dokazovat optimalitu takového zadání je spíš
+formalita.
+
+Nastavení 0 znamená dokazovat optimalitu a u roční úlohy s akumulací může
+běžet hodiny.
+
+### Co nepomůže
+
+Solver běží na **jednom jádře** a **GPU nepoužívá vůbec** — branch & bound je
+sekvenční prohledávání stromu, které se na grafickou kartu nepřeloží. Rychlejší
+procesor pomůže úměrně taktu jednoho jádra, ale exponenciální problém se
+hardwarem neobejde: dvojnásobný výkon udělá z dvaceti hodin deset.
+
 ## Provozní plán vybraného profilu
 
 V sekci scénářů jde po analýze vybrat jeden profil a stáhnout k němu samostatný
