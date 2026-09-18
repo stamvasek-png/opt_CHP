@@ -66,6 +66,8 @@ PROFILE_COLORS = {
     'peak':    '#FF9800',  # oranžová
     'extpeak': '#F44336',  # červená
     'extpsum': '#E91E63',  # růžová
+    'season':     '#795548',  # hnědá
+    'seasonplus': '#827717',  # olivová
     'offpeak': '#9C27B0',  # fialová
     'special': '#00BCD4',  # tyrkysová
     'custom':  '#607D8B',  # šedá
@@ -219,6 +221,19 @@ def _safe_sheet(name: str) -> str:
     """Odstraní znaky neplatné v Excel názvech listů, zkrátí na 31 znaků."""
     return re.sub(r'[/\\*?:\[\]]', '-', name)[:31]
 
+def _round_numeric(df, ndigits=4):
+    """Zaokrouhlí jen číselné sloupce.
+
+    DataFrame.round() na sloupci s časem nic nedělá a pandas na to u kazdeho
+    exportu upozorni varovanim. Na stroji, kde je run.log jediny diagnosticky
+    kanal, je takovy sum na skodu.
+    """
+    out = df.copy()
+    num = out.select_dtypes(include='number').columns
+    out[num] = out[num].round(ndigits)
+    return out
+
+
 def _write_sheet(writer, df, sheet_name, hdr_fmt, num_fmt, txt_fmt):
     safe = _safe_sheet(sheet_name)
     df.to_excel(writer, index=False, sheet_name=safe)
@@ -277,7 +292,7 @@ def build_parameters_df(params, uses):
             add('KGJ', 'Fixní cena plynu [€/MWh]', p.get('kgj_gas_fix_price', '–'))
         # Fixní výkupní cena EE per profil — pouze zapnuté checkboxy
         for prof in ('free', 'base', 'peak', 'extpeak', 'extpsum',
-                     'offpeak', 'special'):
+                     'season', 'seasonplus', 'offpeak', 'special'):
             if p.get(f'kgj_ee_fix_{prof}'):
                 add('KGJ', f'Fixní výkupní cena EE — {prof.upper()} [€/MWh]',
                     p.get(f'kgj_ee_fix_price_{prof}', '–'))
@@ -375,7 +390,8 @@ def to_excel_scenarios(scenarios, params=None, uses=None):
             if scenario['result'] is None:
                 continue
             res_df = scenario['result']['res']
-            df_exp = res_df[[c for c in res_df.columns if c not in skip_cols]].round(4)
+            df_exp = _round_numeric(res_df[[c for c in res_df.columns
+                                            if c not in skip_cols]])
             sheet = profile.upper()[:31]
             _write_sheet(writer, df_exp, sheet, hdr_fmt, num_fmt, txt_fmt)
 
@@ -501,11 +517,8 @@ def to_excel_operating_plan(scenario, profile, params=None, uses=None):
         # ── Listy: hodinovy rozpad profilu ──
         skip_cols = {'Měsíc', 'Hodina dne', 'KGJ on', 'KGJ stop',
                      'Kotel on', 'Import tepla on'}
-        df_exp = res[[c for c in res.columns if c not in skip_cols]].copy()
-        # Zaokrouhlujeme jen cisla - round() na sloupci s casem nic nedela
-        # a pandas na to pri kazdem exportu upozornuje.
-        _num = df_exp.select_dtypes(include='number').columns
-        df_exp[_num] = df_exp[_num].round(4)
+        df_exp = _round_numeric(res[[c for c in res.columns
+                                     if c not in skip_cols]])
         _write_sheet(writer, df_exp, profile.upper(), hdr_fmt, num_fmt, txt_fmt)
 
         # ── Listy: mesice ──
@@ -724,14 +737,15 @@ with st.sidebar:
     
     profiles_to_run = st.multiselect(
         "Které profily testovat?",
-        options=['free', 'base', 'peak', 'extpeak', 'extpsum', 'offpeak',
-                 'special', 'custom'],
+        options=['free', 'base', 'peak', 'extpeak', 'extpsum',
+                 'season', 'seasonplus', 'offpeak', 'special', 'custom'],
         default=['free', 'base', 'peak', 'extpeak', 'offpeak'],
         help="Spusť optimalizaci pro vybrané profily a porovnej je"
     )
     st.caption("💡 BASE = KGJ vždy zapnuto 24/7 (ignoruje limit hodin provozu)")
     st.caption(f"📅 PEAK/EXTPEAK/EXTPSUM/OFFPEAK respektují víkendy a CZ státní svátky "
-               f"({CZ_HOLIDAYS_COVERED_YEARS[0]}–{CZ_HOLIDAYS_COVERED_YEARS[1]}).")
+               f"({CZ_HOLIDAYS_COVERED_YEARS[0]}–{CZ_HOLIDAYS_COVERED_YEARS[1]}). "
+               f"SEASON/SEASON+ jedou 7 dní v týdnu — okno určuje jen měsíc a hodina.")
 
     if st.session_state.fwd_data is not None and {'peak', 'extpeak', 'extpsum', 'offpeak'} & set(profiles_to_run):
         _yrs = pd.to_datetime(st.session_state.fwd_data['datetime']).dt.year.unique()
@@ -748,6 +762,8 @@ with st.sidebar:
         'peak':    {'name': 'Peak (Po-Pá 8-20h)',          'hours': list(range(8, 20)),                      'desc': '12 h × pracovní dny (mimo svátky)'},
         'extpeak': {'name': 'ExtPeak (Po-Pá 6-22h)',       'hours': list(range(6, 22)),                      'desc': '16 h × pracovní dny (mimo svátky)'},
         'extpsum': {'name': 'ExtPeak + letní úprava',        'hours': None,                                    'desc': 'Jako ExtPeak; VI–IX bez 11–17 h, navíc 4–6 h a 22–24 h'},
+        'season':     {'name': 'Season (sezónní okno)',    'hours': None,                                    'desc': '7 dní; I,II,XI,XII 6–22 | III,X 13–23 | IV 15–23 | V–IX 17–23'},
+        'seasonplus': {'name': 'Season+ (širší okno)',     'hours': None,                                    'desc': '7 dní; I,II,XI,XII 5–23 | III,X 12–24 | IV 13–24 | V–IX 16–24'},
         'offpeak': {'name': 'Offpeak (víkendy+svátky+noc)', 'hours': list(range(0, 8)) + list(range(20, 24)), 'desc': 'Víkendy/svátky 24 h + Po-Pá 20-8 h'},
         'special': {'name': 'Special (měsíční)',           'hours': None,                                    'desc': 'I-V,IX-XII: Po06→Pá22 + So06→Ne22 | VI-VIII: Po06→Čt22'},
     }
@@ -980,15 +996,23 @@ with t_tech:
             if p['kgj_ee_fix_peak']:
                 p['kgj_ee_fix_price_peak'] = st.number_input("PEAK cena [€/MWh]",
                     value=130.0, key="ni_kgj_fix_peak")
-        with col_fp2:
             p['kgj_ee_fix_extpeak'] = st.checkbox("Fix cena – EXTPEAK", value=False, key="cb_kgj_fix_extpeak")
             if p['kgj_ee_fix_extpeak']:
                 p['kgj_ee_fix_price_extpeak'] = st.number_input("EXTPEAK cena [€/MWh]",
                     value=150.0, key="ni_kgj_fix_extpeak")
+        with col_fp2:
             p['kgj_ee_fix_extpsum'] = st.checkbox("Fix cena – EXTPSUM", value=False, key="cb_kgj_fix_extpsum")
             if p['kgj_ee_fix_extpsum']:
                 p['kgj_ee_fix_price_extpsum'] = st.number_input("EXTPSUM cena [€/MWh]",
                     value=145.0, key="ni_kgj_fix_extpsum")
+            p['kgj_ee_fix_season'] = st.checkbox("Fix cena – SEASON", value=False, key="cb_kgj_fix_season")
+            if p['kgj_ee_fix_season']:
+                p['kgj_ee_fix_price_season'] = st.number_input("SEASON cena [€/MWh]",
+                    value=148.0, key="ni_kgj_fix_season")
+            p['kgj_ee_fix_seasonplus'] = st.checkbox("Fix cena – SEASON+", value=False, key="cb_kgj_fix_seasonplus")
+            if p['kgj_ee_fix_seasonplus']:
+                p['kgj_ee_fix_price_seasonplus'] = st.number_input("SEASON+ cena [€/MWh]",
+                    value=142.0, key="ni_kgj_fix_seasonplus")
             p['kgj_ee_fix_offpeak'] = st.checkbox("Fix cena – OFFPEAK", value=False, key="cb_kgj_fix_offpeak")
             if p['kgj_ee_fix_offpeak']:
                 p['kgj_ee_fix_price_offpeak'] = st.number_input("OFFPEAK cena [€/MWh]",
@@ -1605,7 +1629,8 @@ if st.session_state.monthly_profile_results is not None:
 
         # Download kombinovaného plánu
         skip_cols_ap = {'Měsíc', 'Hodina dne', 'KGJ on', 'KGJ stop', 'Kotel on', 'Import tepla on'}
-        df_ap_exp = res_ap[[c for c in res_ap.columns if c not in skip_cols_ap]].round(4)
+        df_ap_exp = _round_numeric(res_ap[[c for c in res_ap.columns
+                                          if c not in skip_cols_ap]])
         buf_ap = io.BytesIO()
         with pd.ExcelWriter(buf_ap, engine='xlsxwriter') as writer_ap:
             workbook_ap = writer_ap.book

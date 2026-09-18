@@ -3,6 +3,8 @@
 import inspect
 
 import pulp
+from pathlib import Path
+
 import pytest
 
 import opt_core
@@ -56,7 +58,7 @@ def test_gap_does_not_break_the_result(monkeypatch):
 
 def test_app_threads_gap_through_wrappers():
     """Wrappery v app.py musí mít gap_rel, jinak by ho UI nemělo kam předat."""
-    src = open(f'{opt_core.__file__.rsplit("/", 1)[0]}/app.py', encoding='utf-8').read()
+    src = Path(opt_core.__file__).parent.joinpath('app.py').read_text(encoding='utf-8')
     assert 'DEFAULT_SOLVER_GAP_REL = 0.01' in src
     for fn in ('run_scenario_analysis', 'run_monthly_profile_analysis',
                'run_sensitivity_analysis'):

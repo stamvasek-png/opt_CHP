@@ -120,11 +120,14 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 | `peak` | Po–Pá 08:00–20:00 |
 | `extpeak` | Po–Pá 06:00–22:00 |
 | `extpsum` | jako `extpeak`, ale s letní úpravou (níže) |
+| `season` | sezónní okno, jeden blok denně, 7 dní v týdnu (níže) |
+| `seasonplus` | `season` s okny širšími o 1–2 h na každém konci |
 | `offpeak` | doplněk peaku: víkendy a svátky celý den + Po–Pá 20:00–08:00 |
 | `special` | měsíční vzor s denním rytmem |
 | `custom` | ručně vybrané hodiny |
 
 `peak`, `extpeak`, `extpsum` a `offpeak` respektují víkendy i české státní svátky.
+`season` a `seasonplus` jedou 7 dní v týdnu — okno určuje jen měsíc a hodina.
 
 ### EXTPSUM
 
@@ -142,6 +145,28 @@ okno mění:
 
 Zákaz končí v 17:00, takže hodina 17:00–18:00 se už brát smí. Za rok 2026 to
 dělá 3828 dostupných hodin proti 4000 u `extpeak`.
+
+### SEASON a SEASONPLUS
+
+Jedno souvislé okno na den, **7 dní v týdnu** (svátky se neuplatňují — teplo se
+topí každý den stejně). Okno se s ubývající poptávkou po teple zužuje a posouvá
+do večera, takže v létě vypadne poledne i celá doba provozu FVE.
+
+| Měsíc | `season` | h/den | `seasonplus` | h/den |
+|---|---|---|---|---|
+| I, II, XI, XII | 06:00–22:00 | 16 | 05:00–23:00 | 18 |
+| III, X | 13:00–23:00 | 10 | 12:00–24:00 | 12 |
+| IV | 15:00–23:00 | 8 | 13:00–24:00 | 11 |
+| V–IX | 17:00–23:00 | 6 | 16:00–24:00 | 8 |
+| **za rok 2026** | | **3698 h** | | **4458 h** |
+
+Jeden blok denně znamená **jeden start denně**. Ranní letní špička se úmyslně
+nebere: leží prakticky na bodu zvratu KGJ, takže druhý start za den se z ní
+nezaplatí.
+
+`seasonplus` má krajní hodiny, které se při holé forwardové ceně nevyplatí.
+Smysl dávají, až výkupní cenu zvedne PPA nebo zelený bonus — pak je z čeho brát
+a jde dojet na limit provozních hodin, aniž by se muselo do poledne.
 
 ## Rychlost solveru
 

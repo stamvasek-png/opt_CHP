@@ -73,6 +73,31 @@ EXTPSUM_MONTHS = {6, 7, 8, 9}
 EXTPSUM_BLOCKED = set(range(11, 17))          # 11:00-17:00
 EXTPSUM_EXTRA = set(range(4, 6)) | set(range(22, 24))   # 04:00-06:00, 22:00-24:00
 
+# SEASON profil — jedno souvislé okno na den, 7 dní v týdnu.
+# Okno se s ubývající poptávkou po teple zužuje a posouvá do večera. V létě
+# tím vypadne poledne i celá doba provozu FVE a zbude jen večerní špička.
+# Jeden blok za den = jeden start za den; ranní letní špička se úmyslně
+# nebere — leží na bodu zvratu KGJ, takže druhý start nezaplatí.
+SEASON_WINDOWS = {
+    1: (6, 22),  2: (6, 22),  11: (6, 22), 12: (6, 22),   # zima, 16 h
+    3: (13, 23), 10: (13, 23),                            # přechod, 10 h
+    4: (15, 23),                                          # 8 h
+    5: (17, 23), 6: (17, 23), 7: (17, 23),
+    8: (17, 23), 9: (17, 23),                             # léto, 6 h
+}
+
+# SEASONPLUS — stejný tvar, okna o 1–2 h širší na obou koncích.
+# Krajní hodiny se při holé forwardové ceně nevyplatí, ale jakmile výkupní
+# cenu zvedne PPA nebo zelený bonus, je z čeho brát a jde dojet až na limit
+# provozních hodin, aniž by se muselo do poledne.
+SEASONPLUS_WINDOWS = {
+    1: (5, 23),  2: (5, 23),  11: (5, 23), 12: (5, 23),   # 18 h
+    3: (12, 24), 10: (12, 24),                            # 12 h
+    4: (13, 24),                                          # 11 h
+    5: (16, 24), 6: (16, 24), 7: (16, 24),
+    8: (16, 24), 9: (16, 24),                             # 8 h
+}
+
 
 def create_profile_constraints(df, profile_type, custom_hours=None):
     """
@@ -84,6 +109,10 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
       EXTPEAK – po–pá (mimo CZ státní svátky), 6:00–22:00  (hodiny 6..21, 16 h)
       EXTPSUM – jako EXTPEAK, ale VI–IX bez 11:00–17:00 a navíc s 04:00–06:00
                 a 22:00–24:00 (14 h místo 16 h v letních měsících)
+      SEASON  – jedno okno na den, 7 dní v týdnu (svátky se neuplatňují),
+                šířka podle měsíce: I,II,XI,XII 06–22 | III,X 13–23 |
+                IV 15–23 | V–IX 17–23
+      SEASONPLUS – SEASON s okny širšími o 1–2 h na každém konci
       OFFPEAK – doplněk peaku v rámci 24/7: víkendy a svátky celý den
                 + po–pá hodiny 0..7 a 20..23
       SPECIAL – měsíční vzor s denním rytmem (CZ svátky se neuplatňují):
@@ -119,6 +148,16 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
             else:
                 allowed = 6 <= h < 22
             constraints.append(0 if allowed else -1)
+
+    elif profile_type in ('season', 'seasonplus'):
+        # Okno je dané jen měsícem a hodinou — jede se i o víkendech
+        # a svátcích, protože teplo se topí každý den stejně.
+        windows = SEASON_WINDOWS if profile_type == 'season' else SEASONPLUS_WINDOWS
+        months = dt.dt.month.values
+        constraints = []
+        for h, m in zip(hours, months):
+            lo, hi = windows[int(m)]
+            constraints.append(0 if lo <= h < hi else -1)
 
     elif profile_type == 'offpeak':
         constraints = [0 if ((not bd) or h < 8 or h >= 20) else -1
