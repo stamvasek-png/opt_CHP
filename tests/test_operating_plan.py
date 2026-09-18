@@ -5,6 +5,7 @@ sloupcích, hodiny v řádcích, P = provoz, X = klid.
 """
 
 import ast
+from pathlib import Path
 import io
 import types
 
@@ -15,7 +16,7 @@ import pytest
 from xlsxwriter.utility import xl_col_to_name
 
 import opt_core
-from conftest import SOLVER_TIME_LIMIT, make_df, make_params, make_uses, with_ramp
+from conftest import SOLVER_TIME_LIMIT, make_params, make_uses, with_ramp
 from opt_core import (HOUR_LABELS, MONTH_NAMES_FULL, build_month_grid,
                       run_optimization_with_profile)
 
@@ -31,7 +32,7 @@ def _export_module():
     app.py je Streamlit skript, takže ho nejde importovat — načteme z něj
     přes AST jen ty funkce, které testujeme.
     """
-    src = open(f'{REPO}/app.py', encoding='utf-8').read()
+    src = Path(f'{REPO}/app.py').read_text(encoding='utf-8')
     mod = types.ModuleType('app_export')
     mod.__dict__.update({
         'io': io, 'pd': pd, 're': __import__('re'),
@@ -39,8 +40,9 @@ def _export_module():
         'HOUR_LABELS': HOUR_LABELS, 'MONTH_NAMES_FULL': MONTH_NAMES_FULL,
         'build_month_grid': build_month_grid,
     })
-    wanted = {'_wb_formats', '_safe_sheet', '_write_sheet', 'build_parameters_df',
-              '_write_month_sheet', 'to_excel_operating_plan'}
+    wanted = {'_wb_formats', '_safe_sheet', '_write_sheet', '_round_numeric',
+              'build_parameters_df', '_write_month_sheet',
+              'to_excel_operating_plan'}
     for node in ast.parse(src).body:
         if isinstance(node, ast.FunctionDef) and node.name in wanted:
             exec(compile(ast.Module([node], []), '<app>', 'exec'), mod.__dict__)

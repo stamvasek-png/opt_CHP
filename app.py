@@ -219,6 +219,19 @@ def _safe_sheet(name: str) -> str:
     """Odstraní znaky neplatné v Excel názvech listů, zkrátí na 31 znaků."""
     return re.sub(r'[/\\*?:\[\]]', '-', name)[:31]
 
+def _round_numeric(df, ndigits=4):
+    """Zaokrouhlí jen číselné sloupce.
+
+    DataFrame.round() na sloupci s časem nic nedělá a pandas na to u kazdeho
+    exportu upozorni varovanim. Na stroji, kde je run.log jediny diagnosticky
+    kanal, je takovy sum na skodu.
+    """
+    out = df.copy()
+    num = out.select_dtypes(include='number').columns
+    out[num] = out[num].round(ndigits)
+    return out
+
+
 def _write_sheet(writer, df, sheet_name, hdr_fmt, num_fmt, txt_fmt):
     safe = _safe_sheet(sheet_name)
     df.to_excel(writer, index=False, sheet_name=safe)
@@ -375,7 +388,8 @@ def to_excel_scenarios(scenarios, params=None, uses=None):
             if scenario['result'] is None:
                 continue
             res_df = scenario['result']['res']
-            df_exp = res_df[[c for c in res_df.columns if c not in skip_cols]].round(4)
+            df_exp = _round_numeric(res_df[[c for c in res_df.columns
+                                            if c not in skip_cols]])
             sheet = profile.upper()[:31]
             _write_sheet(writer, df_exp, sheet, hdr_fmt, num_fmt, txt_fmt)
 
@@ -501,11 +515,8 @@ def to_excel_operating_plan(scenario, profile, params=None, uses=None):
         # ── Listy: hodinovy rozpad profilu ──
         skip_cols = {'Měsíc', 'Hodina dne', 'KGJ on', 'KGJ stop',
                      'Kotel on', 'Import tepla on'}
-        df_exp = res[[c for c in res.columns if c not in skip_cols]].copy()
-        # Zaokrouhlujeme jen cisla - round() na sloupci s casem nic nedela
-        # a pandas na to pri kazdem exportu upozornuje.
-        _num = df_exp.select_dtypes(include='number').columns
-        df_exp[_num] = df_exp[_num].round(4)
+        df_exp = _round_numeric(res[[c for c in res.columns
+                                     if c not in skip_cols]])
         _write_sheet(writer, df_exp, profile.upper(), hdr_fmt, num_fmt, txt_fmt)
 
         # ── Listy: mesice ──
@@ -1605,7 +1616,8 @@ if st.session_state.monthly_profile_results is not None:
 
         # Download kombinovaného plánu
         skip_cols_ap = {'Měsíc', 'Hodina dne', 'KGJ on', 'KGJ stop', 'Kotel on', 'Import tepla on'}
-        df_ap_exp = res_ap[[c for c in res_ap.columns if c not in skip_cols_ap]].round(4)
+        df_ap_exp = _round_numeric(res_ap[[c for c in res_ap.columns
+                                          if c not in skip_cols_ap]])
         buf_ap = io.BytesIO()
         with pd.ExcelWriter(buf_ap, engine='xlsxwriter') as writer_ap:
             workbook_ap = writer_ap.book

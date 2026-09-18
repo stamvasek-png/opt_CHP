@@ -4,6 +4,8 @@ Zadání: stejné jako EXTPEAK, ale od 1. 6. do 30. 9. včetně nejde brát
 11:00–17:00, zato jdou navíc 04:00–06:00 a 22:00–24:00.
 """
 
+from pathlib import Path
+
 import pytest
 
 from conftest import make_df
@@ -82,7 +84,7 @@ def test_summer_is_subset_of_nothing_silly():
 def test_profile_is_registered_in_ui():
     """Profil musí být k výběru a mít barvu, jinak se k němu uživatel nedostane."""
     import opt_core
-    src = open(f'{opt_core.__file__.rsplit("/", 1)[0]}/app.py', encoding='utf-8').read()
+    src = Path(opt_core.__file__).parent.joinpath('app.py').read_text(encoding='utf-8')
     assert "'extpsum': '#" in src, 'chybi barva profilu'
     assert "'extpsum', 'offpeak'" in src, 'chybi v nabidce profilu'
     assert "'extpsum': {'name'" in src, 'chybi popis profilu'
