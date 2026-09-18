@@ -127,8 +127,13 @@ MONTH_NAMES = {1:'Led',2:'Úno',3:'Bře',4:'Dub',5:'Kvě',6:'Čvn',
                7:'Čvc',8:'Srp',9:'Zář',10:'Říj',11:'Lis',12:'Pro'}
 
 # ── Výpočetní jádro (bez Streamlitu, sdílené s testy v tests/) ────────
+from xlsxwriter.utility import xl_col_to_name
+
 from opt_core import (
     CZ_HOLIDAYS_COVERED_YEARS,
+    HOUR_LABELS,
+    MONTH_NAMES_FULL,
+    build_month_grid,
     calculate_smoothness_metrics,
     run_optimization_with_profile,
 )
@@ -375,6 +380,150 @@ def to_excel_scenarios(scenarios, params=None, uses=None):
 
     return buf.getvalue()
 
+
+
+def _write_month_sheet(workbook, sheet_name, month_label, days, grid, fmts):
+    """Zapíše jeden měsíční list s mřížkou provozu podle předlohy plan_pr.xlsx."""
+    hdr_fmt, cell_fmt, link_fmt, note_fmt = fmts
+    ws = workbook.add_worksheet(_safe_sheet(sheet_name))
+    n = len(days)
+    last_col = xl_col_to_name(n)          # sloupec A je popisek, dny zacinaji na B
+
+    ws.write_url(0, 0, "internal:'Přehled'!A1", link_fmt, 'zpět na úvod')
+
+    ws.write(1, 0, 'měsíc', hdr_fmt)
+    ws.write(1, 1, month_label, hdr_fmt)
+    ws.write(1, 3, 'odhad provozních hodin v závislosti na potřebě tepla v soustavě',
+             note_fmt)
+
+    ws.write(2, 0, 'den', hdr_fmt)
+    ws.write(3, 0, 'hodina', hdr_fmt)
+    for i, day in enumerate(days):
+        ws.write_number(2, i + 1, day, hdr_fmt)
+        ws.write(3, i + 1, 'provoz', hdr_fmt)
+
+    # Hodiny 00:00-01:00 az 23:00-24:00; prazdna bunka = hodina v datech neni
+    for h in range(24):
+        ws.write(4 + h, 0, HOUR_LABELS[h], hdr_fmt)
+        for i in range(n):
+            val = grid[h][i] if grid else None
+            if val is not None:
+                ws.write_string(4 + h, i + 1, val, cell_fmt)
+
+    # Zive vzorce, aby rucni prepsani bunky prepocitalo soucty
+    ws.write(29, 0, 'počet P')
+    ws.write(30, 0, 'počet X')
+    for i in range(n):
+        col = xl_col_to_name(i + 1)
+        ws.write_formula(29, i + 1, f'=COUNTIF({col}5:{col}28,"P")')
+        ws.write_formula(30, i + 1, f'=COUNTIF({col}5:{col}28,"X")')
+
+    ws.write(32, 0, 'celkové hodnoty za měsíc', hdr_fmt)
+    ws.write(33, 0, 'počet P')
+    ws.write(34, 0, 'počet X')
+    if n:
+        ws.write_formula(33, 1, f'=SUM(B30:{last_col}30)')
+        ws.write_formula(34, 1, f'=SUM(B31:{last_col}31)')
+    ws.write(33, 2, 'Provoz s dodávkou tepla a elektřiny do sítí', note_fmt)
+    ws.write(34, 2, 'Hodiny klidu, tj. bez provozu', note_fmt)
+
+    # Barvy jako v predloze. Pravidlo pro 'F' se nepouziva, ale zustava,
+    # aby se rucne dopsana zluta obarvila sama.
+    if n:
+        for value, bg, fg in (('P', '#C6EFCE', '#006100'),
+                              ('X', '#FFC7CE', '#9C0006'),
+                              ('F', '#FFEB9C', '#9C5700')):
+            ws.conditional_format(4, 1, 27, n, {
+                'type': 'text', 'criteria': 'containing', 'value': value,
+                'format': workbook.add_format({'bg_color': bg, 'font_color': fg}),
+            })
+
+    ws.set_column(0, 0, 13)
+    ws.set_column(1, n, 5)
+    ws.freeze_panes(4, 1)
+    return ws
+
+
+def to_excel_operating_plan(scenario, profile, params=None, uses=None):
+    """Provozní plán jednoho profilu: přehled, hodinový rozpad a list na měsíc."""
+    res = scenario['result']['res']
+    times = pd.to_datetime(res['Čas'])
+    months = sorted(times.dt.month.unique())
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine='xlsxwriter') as writer:
+        workbook = writer.book
+        hdr_fmt, num_fmt, txt_fmt, grn_fmt = _wb_formats(workbook)
+        cell_fmt = workbook.add_format({'align': 'center', 'border': 1})
+        link_fmt = workbook.add_format({'font_color': 'blue', 'underline': 1})
+        note_fmt = workbook.add_format({'italic': True})
+        fmts = (hdr_fmt, cell_fmt, link_fmt, note_fmt)
+
+        # ── List 1: Prehled (rozcestnik) ──
+        ov = workbook.add_worksheet('Přehled')
+        ov.set_column(0, 0, 32)
+        ov.set_column(1, 5, 16)
+        ov.write(0, 0, 'Provozní plán KGJ', grn_fmt)
+        ov.write(1, 0, 'Profil', hdr_fmt)
+        ov.write(1, 1, profile.upper(), hdr_fmt)
+        ov.write(2, 0, 'Období', hdr_fmt)
+        ov.write(2, 1, f'{times.min():%d.%m.%Y} – {times.max():%d.%m.%Y}')
+
+        on_hours = int((res['KGJ on'] > 0.5).sum())
+        kpis = [
+            ('Zisk celkem [€]', res['Hodinový zisk [€]'].sum()),
+            ('Provozní hodiny KGJ [h]', on_hours),
+            ('Hodiny klidu [h]', len(res) - on_hours),
+            ('Dodané teplo [MWh]', res['Dodáno tepla [MW]'].sum()),
+            ('Výroba EE z KGJ [MWh]', res['EE z KGJ [MW]'].sum()),
+            ('Export EE [MWh]', res['EE export [MW]'].sum()),
+            ('Shortfall [MWh]', res['Shortfall [MW]'].sum()),
+        ]
+        if 'CO₂ Celkem [tCO₂]' in res.columns:
+            kpis.append(('CO₂ celkem [tCO₂]', res['CO₂ Celkem [tCO₂]'].sum()))
+        ov.write(4, 0, 'Souhrn za období', hdr_fmt)
+        for i, (name, val) in enumerate(kpis):
+            ov.write(5 + i, 0, name)
+            ov.write_number(5 + i, 1, float(val), num_fmt)
+
+        row0 = 6 + len(kpis)
+        ov.write(row0, 0, 'Měsíc', hdr_fmt)
+        for j, name in enumerate(('Provoz [h]', 'Klid [h]', 'Zisk [€]',
+                                  'Teplo [MWh]', 'EE z KGJ [MWh]')):
+            ov.write(row0, j + 1, name, hdr_fmt)
+
+        # ── Listy: hodinovy rozpad profilu ──
+        skip_cols = {'Měsíc', 'Hodina dne', 'KGJ on', 'KGJ stop',
+                     'Kotel on', 'Import tepla on'}
+        df_exp = res[[c for c in res.columns if c not in skip_cols]].copy()
+        # Zaokrouhlujeme jen cisla - round() na sloupci s casem nic nedela
+        # a pandas na to pri kazdem exportu upozornuje.
+        _num = df_exp.select_dtypes(include='number').columns
+        df_exp[_num] = df_exp[_num].round(4)
+        _write_sheet(writer, df_exp, profile.upper(), hdr_fmt, num_fmt, txt_fmt)
+
+        # ── Listy: mesice ──
+        for k, month in enumerate(months):
+            label = MONTH_NAMES_FULL.get(int(month), str(month))
+            days, grid = build_month_grid(res, int(month))
+            _write_month_sheet(workbook, label, label, days, grid, fmts)
+
+            sub = res.loc[times.dt.month == month]
+            sub_on = int((sub['KGJ on'] > 0.5).sum())
+            ov.write_url(row0 + 1 + k, 0, f"internal:'{_safe_sheet(label)}'!A1",
+                         link_fmt, label)
+            for j, val in enumerate((sub_on, len(sub) - sub_on,
+                                     sub['Hodinový zisk [€]'].sum(),
+                                     sub['Dodáno tepla [MW]'].sum(),
+                                     sub['EE z KGJ [MW]'].sum())):
+                ov.write_number(row0 + 1 + k, j + 1, float(val), num_fmt)
+
+        # ── List: Parametry ──
+        params_df = build_parameters_df(params, uses)
+        if not params_df.empty:
+            _write_sheet(writer, params_df, 'Parametry', hdr_fmt, num_fmt, txt_fmt)
+
+    return buf.getvalue()
 
 def to_excel_monthly(monthly_pr, month_names, params=None, uses=None):
     """Excel export pro měsíční analýzu profilů."""
@@ -1788,6 +1937,33 @@ if st.session_state.scenario_results is not None:
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             key="dl_scenarios"
         )
+
+    # ── Provozni plan vybraneho profilu ──
+    st.markdown("#### 📋 Provozní plán vybraného profilu")
+    st.caption("Sešit s přehledem, hodinovým rozpadem a listem pro každý měsíc, "
+               "kde je vidět, kdy KGJ běžela (P) a kdy stála (X). "
+               "Doběhová hodina po odstavení se počítá jako klid.")
+    _plan_opts = [pr for pr in scenarios if scenarios[pr].get('result')]
+    if _plan_opts:
+        _plan_pr = st.selectbox(
+            "Profil pro provozní plán",
+            options=_plan_opts,
+            format_func=lambda x: x.upper(),
+            key="plan_profile")
+        if st.button("📦 Připravit provozní plán ke stažení", key="prep_plan"):
+            with st.spinner("⏳ Generuji Excel …"):
+                st.session_state['_xlsx_plan'] = to_excel_operating_plan(
+                    scenarios[_plan_pr], _plan_pr, params=p, uses=uses)
+                st.session_state['_xlsx_plan_pr'] = _plan_pr
+        if st.session_state.get('_xlsx_plan') is not None:
+            _pr_name = st.session_state.get('_xlsx_plan_pr', 'profil')
+            st.download_button(
+                label=f"📥 Stáhnout provozní plán {_pr_name.upper()} (Excel)",
+                data=st.session_state['_xlsx_plan'],
+                file_name=f"kgj_provozni_plan_{_pr_name}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dl_plan"
+            )
 
 # ─────────────────────────────────────────────
 # CITLIVOSTNÍ ANALÝZA (standalone)
