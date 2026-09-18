@@ -111,6 +111,92 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 - Verze v `requirements-lock.txt` jsou ověřené. `requirements.txt` je volnější,
   ale drží `pulp<4` — v PuLP 4.0 mizí API, které model používá.
 
+## Provozní profily KGJ
+
+| Profil | Okno |
+|---|---|
+| `free` | bez omezení |
+| `base` | 24/7, KGJ vždy zapnuto |
+| `peak` | Po–Pá 08:00–20:00 |
+| `extpeak` | Po–Pá 06:00–22:00 |
+| `extpsum` | jako `extpeak`, ale s letní úpravou (níže) |
+| `offpeak` | doplněk peaku: víkendy a svátky celý den + Po–Pá 20:00–08:00 |
+| `special` | měsíční vzor s denním rytmem |
+| `custom` | ručně vybrané hodiny |
+
+`peak`, `extpeak`, `extpsum` a `offpeak` respektují víkendy i české státní svátky.
+
+### EXTPSUM
+
+Základ je `extpeak`, tedy Po–Pá 06:00–22:00. **Od 1. 6. do 30. 9. včetně** se
+okno mění:
+
+| Čas | Zima (X–V) | Léto (VI–IX) |
+|---|---|---|
+| 04:00–06:00 | — | **lze** |
+| 06:00–11:00 | lze | lze |
+| 11:00–17:00 | lze | **nelze** |
+| 17:00–22:00 | lze | lze |
+| 22:00–24:00 | — | **lze** |
+| **denně** | **16 h** | **14 h** |
+
+Zákaz končí v 17:00, takže hodina 17:00–18:00 se už brát smí. Za rok 2026 to
+dělá 3828 dostupných hodin proti 4000 u `extpeak`.
+
+## Rychlost solveru
+
+Roční úloha (8760 hodin) je pro CBC náročná a nejvíc na ní záleží, jestli je
+zapnutá **akumulace**. Naměřeno na profilu FREE s limitem 10 minut:
+
+| Technologie | Čas | Doběhlo samo? |
+|---|---|---|
+| jen KGJ + kotel | 141 s | ano |
+| \+ elektrokotel + FVE | 237 s | ano |
+| \+ nádrž (TES) | 644 s | ne, limit |
+| všechno včetně baterie | 666 s | ne, limit |
+
+Nádrž propojí stav nabití mezi všemi hodinami roku, takže se z úlohy stane
+jeden provázaný problém — a to je ten zlom. Profil FREE je navíc nejtěžší,
+protože nemá žádná profilová omezení a všech 8760 binárek zůstává volných.
+
+### Tolerance od optima
+
+V sidebaru je **„Tolerance od optima [%]"**, výchozí 1 %. Solver skončí, jakmile
+ví, že je blíž než tahle mezera k optimu.
+
+Rozdíl je zásadní: **najít dobré řešení je rychlé, dokázat že lepší neexistuje
+může trvat řádově déle.** Poslední desetina procenta obvykle spotřebuje víc času
+než prvních 99 %. U modelu, který stojí na odhadu FWD křivky, je přitom 1 %
+hluboko pod nejistotou vstupů — dokazovat optimalitu takového zadání je spíš
+formalita.
+
+Naměřeno na téže roční úloze se všemi technologiemi, limit 15 minut:
+
+| Nastavení | Čas | Dojelo na limit? | Zisk |
+|---|---|---|---|
+| bez tolerance | 946 s | ano | 636 374 € |
+| 0,5 % | 398 s | ne | 636 374 € |
+| **1 %** | **395 s** | ne | **636 374 €** |
+| 1 % + `threads=6` | 400 s | ne | 636 374 € |
+
+Zisk vyšel ve všech případech **identicky**. Tolerance nestála nic na kvalitě
+řešení — solver ho našel dávno a zbylých 550 sekund jen dokazoval, že lepší
+neexistuje. Na konkrétní hodnotě navíc moc nezáleží; rozhoduje, že tam nějaká
+tolerance je.
+
+Nastavení 0 znamená dokazovat optimalitu a u roční úlohy s akumulací může
+běžet hodiny.
+
+### Co nepomůže
+
+Solver běží na **jednom jádře** a **GPU nepoužívá vůbec** — branch & bound je
+sekvenční prohledávání stromu, které se na grafickou kartu nepřeloží. Rychlejší
+procesor pomůže úměrně taktu jednoho jádra, ale exponenciální problém se
+hardwarem neobejde: dvojnásobný výkon udělá z dvaceti hodin deset.
+
+Ani víc jader nepomůže. V tabulce výše je vidět, že `threads=6` skončilo na
+400 s proti 395 s bez něj — přiložený CBC 2.10.3 paralelně nepočítá.
+
 ## Provozní plán vybraného profilu
 
 V sekci scénářů jde po analýze vybrat jeden profil a stáhnout k němu samostatný
