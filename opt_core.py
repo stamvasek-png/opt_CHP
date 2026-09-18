@@ -66,6 +66,13 @@ SPECIAL_ON_OTHER  = set(range(6, 118)) | set(range(126, 166))
 SPECIAL_ON_SUMMER = set(range(6, 94))
 SPECIAL_SUMMER_MONTHS = {6, 7, 8}
 
+# EXTPSUM profil — EXTPEAK s letní úpravou.
+# Od 1. 6. do 30. 9. včetně nejde brát poledne (11:00–17:00), zato jdou
+# navíc brát okraje dne: 04:00–06:00 a 22:00–24:00.
+EXTPSUM_MONTHS = {6, 7, 8, 9}
+EXTPSUM_BLOCKED = set(range(11, 17))          # 11:00-17:00
+EXTPSUM_EXTRA = set(range(4, 6)) | set(range(22, 24))   # 04:00-06:00, 22:00-24:00
+
 
 def create_profile_constraints(df, profile_type, custom_hours=None):
     """
@@ -75,6 +82,8 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
     Konvence (PXE/OTE + provozní úprava pro KGJ):
       PEAK    – po–pá (mimo CZ státní svátky), 8:00–20:00  (hodiny 8..19, 12 h)
       EXTPEAK – po–pá (mimo CZ státní svátky), 6:00–22:00  (hodiny 6..21, 16 h)
+      EXTPSUM – jako EXTPEAK, ale VI–IX bez 11:00–17:00 a navíc s 04:00–06:00
+                a 22:00–24:00 (14 h místo 16 h v letních měsících)
       OFFPEAK – doplněk peaku v rámci 24/7: víkendy a svátky celý den
                 + po–pá hodiny 0..7 a 20..23
       SPECIAL – měsíční vzor s denním rytmem (CZ svátky se neuplatňují):
@@ -97,6 +106,19 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
     elif profile_type == 'extpeak':
         constraints = [0 if (bd and 6 <= h < 22) else -1
                        for h, bd in zip(hours, bdays)]
+
+    elif profile_type == 'extpsum':
+        months = dt.dt.month.values
+        constraints = []
+        for h, bd, m in zip(hours, bdays, months):
+            if not bd:
+                constraints.append(-1)
+                continue
+            if m in EXTPSUM_MONTHS:
+                allowed = ((6 <= h < 22) and h not in EXTPSUM_BLOCKED) or h in EXTPSUM_EXTRA
+            else:
+                allowed = 6 <= h < 22
+            constraints.append(0 if allowed else -1)
 
     elif profile_type == 'offpeak':
         constraints = [0 if ((not bd) or h < 8 or h >= 20) else -1
