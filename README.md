@@ -138,6 +138,20 @@ než prvních 99 %. U modelu, který stojí na odhadu FWD křivky, je přitom 1 
 hluboko pod nejistotou vstupů — dokazovat optimalitu takového zadání je spíš
 formalita.
 
+Naměřeno na téže roční úloze se všemi technologiemi, limit 15 minut:
+
+| Nastavení | Čas | Dojelo na limit? | Zisk |
+|---|---|---|---|
+| bez tolerance | 946 s | ano | 636 374 € |
+| 0,5 % | 398 s | ne | 636 374 € |
+| **1 %** | **395 s** | ne | **636 374 €** |
+| 1 % + `threads=6` | 400 s | ne | 636 374 € |
+
+Zisk vyšel ve všech případech **identicky**. Tolerance nestála nic na kvalitě
+řešení — solver ho našel dávno a zbylých 550 sekund jen dokazoval, že lepší
+neexistuje. Na konkrétní hodnotě navíc moc nezáleží; rozhoduje, že tam nějaká
+tolerance je.
+
 Nastavení 0 znamená dokazovat optimalitu a u roční úlohy s akumulací může
 běžet hodiny.
 
@@ -147,6 +161,9 @@ Solver běží na **jednom jádře** a **GPU nepoužívá vůbec** — branch & 
 sekvenční prohledávání stromu, které se na grafickou kartu nepřeloží. Rychlejší
 procesor pomůže úměrně taktu jednoho jádra, ale exponenciální problém se
 hardwarem neobejde: dvojnásobný výkon udělá z dvaceti hodin deset.
+
+Ani víc jader nepomůže. V tabulce výše je vidět, že `threads=6` skončilo na
+400 s proti 395 s bez něj — přiložený CBC 2.10.3 paralelně nepočítá.
 
 ## Provozní plán vybraného profilu
 
