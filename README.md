@@ -111,6 +111,38 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 - Verze v `requirements-lock.txt` jsou ověřené. `requirements.txt` je volnější,
   ale drží `pulp<4` — v PuLP 4.0 mizí API, které model používá.
 
+## Provozní profily KGJ
+
+| Profil | Okno |
+|---|---|
+| `free` | bez omezení |
+| `base` | 24/7, KGJ vždy zapnuto |
+| `peak` | Po–Pá 08:00–20:00 |
+| `extpeak` | Po–Pá 06:00–22:00 |
+| `extpsum` | jako `extpeak`, ale s letní úpravou (níže) |
+| `offpeak` | doplněk peaku: víkendy a svátky celý den + Po–Pá 20:00–08:00 |
+| `special` | měsíční vzor s denním rytmem |
+| `custom` | ručně vybrané hodiny |
+
+`peak`, `extpeak`, `extpsum` a `offpeak` respektují víkendy i české státní svátky.
+
+### EXTPSUM
+
+Základ je `extpeak`, tedy Po–Pá 06:00–22:00. **Od 1. 6. do 30. 9. včetně** se
+okno mění:
+
+| Čas | Zima (X–V) | Léto (VI–IX) |
+|---|---|---|
+| 04:00–06:00 | — | **lze** |
+| 06:00–11:00 | lze | lze |
+| 11:00–17:00 | lze | **nelze** |
+| 17:00–22:00 | lze | lze |
+| 22:00–24:00 | — | **lze** |
+| **denně** | **16 h** | **14 h** |
+
+Zákaz končí v 17:00, takže hodina 17:00–18:00 se už brát smí. Za rok 2026 to
+dělá 3828 dostupných hodin proti 4000 u `extpeak`.
+
 ## Rychlost solveru
 
 Roční úloha (8760 hodin) je pro CBC náročná a nejvíc na ní záleží, jestli je
