@@ -111,6 +111,35 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 - Verze v `requirements-lock.txt` jsou ověřené. `requirements.txt` je volnější,
   ale drží `pulp<4` — v PuLP 4.0 mizí API, které model používá.
 
+## Provozní plán vybraného profilu
+
+V sekci scénářů jde po analýze vybrat jeden profil a stáhnout k němu samostatný
+sešit (`kgj_provozni_plan_<profil>.xlsx`):
+
+| List | Obsah |
+|---|---|
+| `Přehled` | souhrn za období, tabulka po měsících, odkazy na měsíční listy |
+| `<PROFIL>` | hodinový rozpad, stejný jako v exportu scénářů |
+| `LEDEN` … | jeden list na měsíc s mřížkou provozu |
+| `Parametry` | použité nastavení |
+
+Měsíční list má dny ve sloupcích a hodiny v řádcích, `P` = provoz (zeleně),
+`X` = klid (červeně). Řádky jsou popsané rovnou intervalem `00:00-01:00` až
+`23:00-24:00`, aby nebylo nutné dohadovat, co znamená „hodina 1".
+
+Počty pod tabulkou jsou **živé vzorce** (`COUNTIF` / `SUM`), takže ruční
+přepsání buňky součty přepočítá. Žluté podmíněné formátování pro hodnotu `F`
+zůstává připravené, i když se automaticky nikdy nezapíše.
+
+**Doběhová hodina se počítá jako klid.** Mřížka se plní z nasazení
+(`KGJ on`), ne ze skutečného výkonu — hodina po odstavení má `X`, přestože
+v ní jednotka ještě dodává zbytkové teplo z bloku.
+
+Při nekompletních datech zůstane buňka prázdná místo `X`: den mimo analyzované
+období, nebo hodina, která kvůli přechodu na letní čas neexistuje. Zdvojená
+hodina na konci října se sloučí do jedné buňky, `P` když jednotka běžela
+aspoň v jedné z nich.
+
 ## Rampy nájezdu / sjezdu KGJ
 
 Volitelně (záložka **Technika** → *Modelovat nájezd / sjezd KGJ*) model rozprostře

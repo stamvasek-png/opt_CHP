@@ -5,6 +5,7 @@ provozních profilů KGJ, linearizace účinnostní křivky a samotný MILP solv
 `app.py` tyhle funkce importuje; testy v `tests/` je importují přímo.
 """
 
+import calendar
 import datetime as _dt
 
 import numpy as np
@@ -772,3 +773,62 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
             'status': status, 'total_profit': res['Hodinový zisk [€]'].sum(),
             'lp_objective': float(pulp.value(model.objective) or 0.0),
             'total_co2': total_co2}
+# ────────────────────────────────────────────────
+# PROVOZNI PLAN - mesicni mrizka den x hodina
+# ────────────────────────────────────────────────
+
+MONTH_NAMES_FULL = {
+    1: 'LEDEN', 2: 'ÚNOR', 3: 'BŘEZEN', 4: 'DUBEN', 5: 'KVĚTEN', 6: 'ČERVEN',
+    7: 'ČERVENEC', 8: 'SRPEN', 9: 'ZÁŘÍ', 10: 'ŘÍJEN', 11: 'LISTOPAD',
+    12: 'PROSINEC',
+}
+
+# Popisky radku. Misto cisel 1-24 rovnou intervaly, at neni pochyb o tom,
+# jestli "hodina 1" znamena pulnoc nebo jednu rano.
+HOUR_LABELS = [f'{h:02d}:00-{h + 1:02d}:00' for h in range(24)]
+
+
+def build_month_grid(res, month):
+    """Sestaví mřížku provozu KGJ pro jeden měsíc.
+
+    Vrací (dny, mřížka), kde mřížka[h][i] je 'P' (provoz), 'X' (klid) nebo
+    None pro hodinu, která v datech není. `dny` je seznam čísel dní
+    kalendářního měsíce, takže mřížka pokrývá celý měsíc i při dílčí analýze.
+
+    Čte se sloupec 'KGJ on', tedy **nasazení**, ne skutečný výkon: doběhová
+    hodina po odstavení má on = 0, takže vyjde jako 'X', přestože v ní
+    jednotka ještě dodává zbytkové teplo z bloku.
+    """
+    times = pd.to_datetime(res['Čas'])
+    mask = times.dt.month == month
+    if not mask.any():
+        return [], []
+
+    sub = res.loc[mask]
+    sub_times = times.loc[mask]
+    year = int(sub_times.dt.year.iloc[0])
+    n_days = calendar.monthrange(year, month)[1]
+    days = list(range(1, n_days + 1))
+
+    # Pri prechodu na zimni cas jsou v datech dve hodiny se stejnym razitkem.
+    # Bereme max, tedy 'P', pokud jednotka bezela aspon v jedne z nich.
+    running = {}
+    for day, hour, on in zip(sub_times.dt.day, sub_times.dt.hour,
+                             sub['KGJ on'] > 0.5):
+        key = (int(day), int(hour))
+        running[key] = running.get(key, False) or bool(on)
+
+    grid = [[None] * n_days for _ in range(24)]
+    for (day, hour), on in running.items():
+        grid[hour][day - 1] = 'P' if on else 'X'
+    return days, grid
+
+
+def month_grid_totals(grid):
+    """(počty P po dnech, počty X po dnech) — pro kontrolu proti vzorcům."""
+    if not grid:
+        return [], []
+    n_days = len(grid[0])
+    p = [sum(1 for h in range(24) if grid[h][d] == 'P') for d in range(n_days)]
+    x = [sum(1 for h in range(24) if grid[h][d] == 'X') for d in range(n_days)]
+    return p, x
