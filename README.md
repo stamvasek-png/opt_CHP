@@ -122,6 +122,7 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 | `extpsum` | jako `extpeak`, ale s letní úpravou (níže) |
 | `season` | sezónní okno, jeden blok denně, 7 dní v týdnu (níže) |
 | `seasonplus` | `season` s okny širšími o 1–2 h na každém konci |
+| `p` | pásmo z nejlepších FWD hodin ceny EE (níže) |
 | `offpeak` | doplněk peaku: víkendy a svátky celý den + Po–Pá 20:00–08:00 |
 | `special` | měsíční vzor s denním rytmem |
 | `custom` | ručně vybrané hodiny |
@@ -167,6 +168,33 @@ nezaplatí.
 `seasonplus` má krajní hodiny, které se při holé forwardové ceně nevyplatí.
 Smysl dávají, až výkupní cenu zvedne PPA nebo zelený bonus — pak je z čeho brát
 a jde dojet na limit provozních hodin, aniž by se muselo do poledne.
+
+### P
+
+Pásmo poskládané z **nejlepších FWD hodin ceny EE**, 7 dní v týdnu, jedno okno
+na měsíc.
+
+| Měsíc | Okno | h/den | h/měsíc |
+|---|---|---|---|
+| I | 07:00–23:00 | 16 | 496 |
+| II, III | 06:00–22:00 | 16 | 448 / 496 |
+| IV, V | 18:00–24:00 | 6 | 180 / 186 |
+| VI, VII, VIII | 17:00–24:00 | 7 | 210 / 217 / 217 |
+| IX | 17:00–23:00 | 6 | 180 |
+| X, XI, XII | 06:00–22:00 | 16 | 496 / 480 / 496 |
+| **za rok 2026** | | | **4102 h** |
+
+Okna nejsou odhad. Pro každý měsíc se prošla všechna souvislá okna a přes
+měsíce se to složilo batohem (DP) na rozpočet ~4000 h se stropem 16 h na blok.
+Účelová funkce je součet FWD ceny při pevné velikosti pásma, což je při pevném
+počtu hodin totéž co jeho průměrná cena.
+
+Na datech 2026 vychází pásmo na **91,5 €/MWh** proti **97,4 €/MWh**, které by
+dal volný výběr 4000 nejdražších hodin — rozdíl je cena za to, že je pásmo
+uvnitř měsíce konzistentní. Strop 16 h na blok stojí z toho 1,1 €/MWh.
+
+Letní okna začínají v 17:00 resp. 18:00, takže poledne i doba provozu FVE
+vypadnou samy, bez zvláštního pravidla.
 
 ## Rychlost solveru
 

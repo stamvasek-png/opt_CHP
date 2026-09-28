@@ -17,8 +17,8 @@ from xlsxwriter.utility import xl_col_to_name
 
 import opt_core
 from conftest import SOLVER_TIME_LIMIT, make_params, make_uses, with_ramp
-from opt_core import (HOUR_LABELS, MONTH_NAMES_FULL, build_month_grid,
-                      run_optimization_with_profile)
+from opt_core import (HOUR_LABELS, MONTH_NAMES_FULL, build_hour_month_matrix,
+                      build_month_grid, run_optimization_with_profile)
 
 REPO = opt_core.__file__.rsplit('/', 1)[0]
 
@@ -39,10 +39,11 @@ def _export_module():
         'xl_col_to_name': xl_col_to_name,
         'HOUR_LABELS': HOUR_LABELS, 'MONTH_NAMES_FULL': MONTH_NAMES_FULL,
         'build_month_grid': build_month_grid,
+        'build_hour_month_matrix': build_hour_month_matrix,
     })
     wanted = {'_wb_formats', '_safe_sheet', '_write_sheet', '_round_numeric',
               'build_parameters_df', '_write_month_sheet',
-              'to_excel_operating_plan'}
+              '_write_hour_matrix', 'to_excel_operating_plan'}
     for node in ast.parse(src).body:
         if isinstance(node, ast.FunctionDef) and node.name in wanted:
             exec(compile(ast.Module([node], []), '<app>', 'exec'), mod.__dict__)

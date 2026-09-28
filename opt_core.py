@@ -98,6 +98,29 @@ SEASONPLUS_WINDOWS = {
     8: (16, 24), 9: (16, 24),                             # 8 h
 }
 
+# Profil P — pásmo poskládané z nejlepších FWD hodin ceny EE.
+# Okna nejsou odhad: pro každý měsíc se prošla všechna souvislá okna a přes
+# měsíce se to složilo batohem na rozpočet ~4000 h se stropem 16 h na blok.
+# Účelová funkce je součet FWD ceny při pevné velikosti pásma, tedy přímo
+# jeho průměrná cena. Na datech 2026 vychází 91,5 €/MWh proti 97,4 €/MWh,
+# které by dal volný výběr 4000 nejdražších hodin — to je cena za to, že
+# pásmo je uvnitř měsíce konzistentní.
+P_WINDOWS = {
+    1: (7, 23),                                           # 16 h
+    2: (6, 22),  3: (6, 22),                              # 16 h
+    4: (18, 24), 5: (18, 24),                             # 6 h
+    6: (17, 24), 7: (17, 24), 8: (17, 24),                # 7 h
+    9: (17, 23),                                          # 6 h
+    10: (6, 22), 11: (6, 22), 12: (6, 22),                # 16 h
+}
+
+# Profily, které jsou dané jen dvojicí (měsíc → okno) a jedou 7 dní v týdnu.
+MONTH_WINDOW_PROFILES = {
+    'season':     SEASON_WINDOWS,
+    'seasonplus': SEASONPLUS_WINDOWS,
+    'p':          P_WINDOWS,
+}
+
 
 def create_profile_constraints(df, profile_type, custom_hours=None):
     """
@@ -113,6 +136,9 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
                 šířka podle měsíce: I,II,XI,XII 06–22 | III,X 13–23 |
                 IV 15–23 | V–IX 17–23
       SEASONPLUS – SEASON s okny širšími o 1–2 h na každém konci
+      P       – pásmo z nejlepších FWD hodin ceny EE, 7 dní v týdnu:
+                I 07–23 | II,III 06–22 | IV,V 18–24 | VI–VIII 17–24 |
+                IX 17–23 | X–XII 06–22
       OFFPEAK – doplněk peaku v rámci 24/7: víkendy a svátky celý den
                 + po–pá hodiny 0..7 a 20..23
       SPECIAL – měsíční vzor s denním rytmem (CZ svátky se neuplatňují):
@@ -149,10 +175,10 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
                 allowed = 6 <= h < 22
             constraints.append(0 if allowed else -1)
 
-    elif profile_type in ('season', 'seasonplus'):
+    elif profile_type in MONTH_WINDOW_PROFILES:
         # Okno je dané jen měsícem a hodinou — jede se i o víkendech
         # a svátcích, protože teplo se topí každý den stejně.
-        windows = SEASON_WINDOWS if profile_type == 'season' else SEASONPLUS_WINDOWS
+        windows = MONTH_WINDOW_PROFILES[profile_type]
         months = dt.dt.month.values
         constraints = []
         for h, m in zip(hours, months):
@@ -890,6 +916,39 @@ def build_month_grid(res, month):
     for (day, hour), on in running.items():
         grid[hour][day - 1] = 'P' if on else 'X'
     return days, grid
+
+
+MONTH_NAMES_ROMAN = {1: 'I', 2: 'II', 3: 'III', 4: 'IV', 5: 'V', 6: 'VI',
+                     7: 'VII', 8: 'VIII', 9: 'IX', 10: 'X', 11: 'XI',
+                     12: 'XII'}
+
+
+def build_hour_month_matrix(res):
+    """Zjednodušený přehled: v kterých hodinách dne profil v daném měsíci jede.
+
+    Vrací DataFrame 24 × (měsíce v datech). Řádky jsou hodinové intervaly,
+    hodnota je **počet dní** toho měsíce, kdy KGJ v té hodině běžela. Nula
+    znamená, že do té hodiny profil vůbec nechodí.
+
+    Čte se `KGJ on` (nasazení), stejně jako měsíční mřížka — doběhová hodina
+    po odstavení se tedy nepočítá jako provoz. Duplicitní razítko při přechodu
+    na zimní čas se bere jako jeden den, aby se ten den nezapočítal dvakrát.
+    """
+    times = pd.to_datetime(res['Čas'])
+    on = (res['KGJ on'] > 0.5).values
+    months = sorted(int(m) for m in times.dt.month.unique())
+
+    # (mesic, den, hodina) -> bezelo aspon v jednom ze zaznamu
+    seen = {}
+    for m, d, h, run in zip(times.dt.month, times.dt.day, times.dt.hour, on):
+        key = (int(m), int(d), int(h))
+        seen[key] = seen.get(key, False) or bool(run)
+
+    data = {MONTH_NAMES_ROMAN[m]: [0] * 24 for m in months}
+    for (m, _day, h), run in seen.items():
+        if run:
+            data[MONTH_NAMES_ROMAN[m]][h] += 1
+    return pd.DataFrame(data, index=HOUR_LABELS)
 
 
 def month_grid_totals(grid):
