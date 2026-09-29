@@ -297,6 +297,8 @@ def build_parameters_df(params, uses):
             add('KGJ', 'η_el při min. zátěži [-]', p.get('eta_el_min', '–'))
         if p.get('kgj_hour_limit_on'):
             add('KGJ', 'Max. hodin provozu / rok', p.get('kgj_hour_limit', '–'))
+        if p.get('kgj_whole_months'):
+            add('KGJ', 'Profily po celých měsících', 'ANO')
         if p.get('kgj_gas_fix'):
             add('KGJ', 'Fixní cena plynu [€/MWh]', p.get('kgj_gas_fix_price', '–'))
         # Fixní výkupní cena EE per profil — pouze zapnuté checkboxy
@@ -912,7 +914,19 @@ with st.sidebar:
             'hours': custom_hours,
             'desc': f"Custom"
         }
-    
+
+    whole_months = st.checkbox(
+        "Profily po celých měsících", value=False, key="cb_whole_months",
+        help="V každém měsíci jede KGJ buď ve všech hodinách profilu, nebo "
+             "v žádné — i když je některý týden ztrátový, rozhoduje měsíc jako "
+             "celek. Které měsíce, vybere solver: s limitem hodin např. PEAK "
+             "do 3300 h pustí profil do nejvýnosnějších celých měsíců. Co celé "
+             "měsíce z limitu nevyčerpají, smí jít do jednoho dalšího měsíce, "
+             "který pak bude neúplný. Výkon si model volí dál (min. zatížení "
+             "až 100 %). V celých měsících se min. doba běhu a limit startů "
+             "neuplatní — hodiny určuje profil. BASE se nemění, FREE = celé "
+             "měsíce 24/7.")
+
     # Provozní Omezení
     st.subheader("3️⃣ Omezení Provozování")
     
@@ -996,6 +1010,7 @@ if st.session_state.fwd_data is not None:
 # PARAMETRY
 # ────────────────────────────────────────────────
 p = {}
+p['kgj_whole_months'] = whole_months   # checkbox u výběru profilů v panelu
 t_gen, t_tech, t_co2 = st.tabs(["Obecné", "Technika", "Emise CO₂"])
 
 with t_gen:
@@ -1531,8 +1546,8 @@ if st.session_state.fwd_data is not None and loc_file is not None:
     # ════════════════════════════════════════════════
     # Blok kratsi nez min. doba behu se neda pouzit vubec — model KGJ do nej
     # nenastartuje ani pri sebevyssi cene. Radeji to rict predem nez vratit
-    # nulovy provoz bez vysvetleni.
-    if use_kgj:
+    # nulovy provoz bez vysvetleni. Po celych mesicich bloky jedou natvrdo.
+    if use_kgj and not whole_months:
         _mrt = int(p.get('k_min_runtime', 1) or 1)
         for _prof in profiles_to_run:
             _short = short_blocks(_prof, _mrt)
@@ -1547,6 +1562,14 @@ if st.session_state.fwd_data is not None and loc_file is not None:
                     f"nenastartuje vůbec: {_desc}. Pro plné využití profilu "
                     f"nastav min. dobu běhu na "
                     f"{min(hi - lo for bl in _short.values() for lo, hi in bl)} h.")
+
+    if use_kgj and whole_months:
+        _skip = ("min. doba běhu ani limit startů za měsíc se neuplatní"
+                 if use_month_start_limit else "min. doba běhu se neuplatní")
+        st.info(f"🗓️ Profily po celých měsících: v každém měsíci jede KGJ buď ve "
+                f"všech hodinách profilu, nebo v žádné; měsíce vybere solver. "
+                f"Zbytek limitu hodin smí jít do jednoho neúplného měsíce. "
+                f"V celých měsících {_skip} — hodiny určuje profil.")
 
     n_months = pd.to_datetime(df['datetime']).dt.month.nunique()
     run_monthly = st.checkbox(
