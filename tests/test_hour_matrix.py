@@ -5,23 +5,16 @@ Stejný výpočet jde do porovnání scénářů i do provozního plánu, proto 
 v jádře a ne v `app.py`.
 """
 
-import ast
 import io
-import types
-from pathlib import Path
 
 import numpy as np
 import openpyxl
 import pandas as pd
 import pytest
-from xlsxwriter.utility import xl_col_to_name
 
-import opt_core
 from conftest import SOLVER_TIME_LIMIT, make_params, make_uses
-from opt_core import (HOUR_LABELS, MONTH_NAMES_FULL, build_hour_month_matrix,
-                      build_month_grid, run_optimization_with_profile)
-
-REPO = opt_core.__file__.rsplit('/', 1)[0]
+from opt_core import (HOUR_LABELS, build_hour_month_matrix, build_month_grid,
+                      run_optimization_with_profile)
 
 
 def _res(hours, start='2026-01-01 00:00', on=None):
@@ -105,24 +98,8 @@ def test_matches_month_grid():
 # ── zápis do sešitu ──────────────────────────────────────────────────
 
 def _export_module():
-    src = Path(f'{REPO}/app.py').read_text(encoding='utf-8')
-    mod = types.ModuleType('app_export')
-    mod.__dict__.update({
-        'io': io, 'pd': pd, 're': __import__('re'),
-        'xl_col_to_name': xl_col_to_name,
-        'HOUR_LABELS': HOUR_LABELS, 'MONTH_NAMES_FULL': MONTH_NAMES_FULL,
-        'build_month_grid': build_month_grid,
-        'build_hour_month_matrix': build_hour_month_matrix,
-    })
-    wanted = {'_wb_formats', '_safe_sheet', '_write_sheet', '_round_numeric',
-              'build_parameters_df', '_write_month_sheet',
-              '_write_hour_matrix', 'to_excel_operating_plan'}
-    for node in ast.parse(src).body:
-        if isinstance(node, ast.FunctionDef) and node.name in wanted:
-            exec(compile(ast.Module([node], []), '<app>', 'exec'), mod.__dict__)
-    missing = wanted - set(mod.__dict__)
-    assert not missing, f'v app.py chybí {missing}'
-    return mod
+    from app_extract import load_app
+    return load_app()
 
 
 @pytest.fixture(scope='module')

@@ -123,6 +123,7 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 | `season` | sezónní okno, jeden blok denně, 7 dní v týdnu (níže) |
 | `seasonplus` | `season` s okny širšími o 1–2 h na každém konci |
 | `p` | pásmo z nejlepších FWD hodin ceny EE (níže) |
+| `prom26` | dodaná hodinová maska na rok 2026 (níže) |
 | `offpeak` | doplněk peaku: víkendy a svátky celý den + Po–Pá 20:00–08:00 |
 | `special` | měsíční vzor s denním rytmem |
 | `custom` | ručně vybrané hodiny |
@@ -195,6 +196,52 @@ uvnitř měsíce konzistentní. Strop 16 h na blok stojí z toho 1,1 €/MWh.
 
 Letní okna začínají v 17:00 resp. 18:00, takže poledne i doba provozu FVE
 vypadnou samy, bez zvláštního pravidla.
+
+### PROM26
+
+Převzatá hodinová maska 0/1 na rok 2026 — **3420 h**. Beze zbytku se rozkládá
+na okna po měsících a pět výjimečných dní, takže je v kódu v téhle podobě
+(dá se přečíst), ne jako 8760 nul a jedniček. Jede se i o víkendech.
+
+| Měsíc | Okno | h/den |
+|---|---|---|
+| I, II, XI, XII | 06:00–22:00 | 16 |
+| III, X | 06:00–10:00 + 16:00–22:00 | 10 |
+| IV | 06:00–09:00 + 17:00–22:00 | 8 |
+| V | 06:00–09:00 + 19:00–22:00 | 6 |
+| VI, VII, VIII | 06:00–09:00 | 3 |
+| IX | 06:00–09:00 + 18:00–22:00 | 7 |
+
+| Den | Okno |
+|---|---|
+| 1. 1. | klid |
+| 1. 10. | 06:00–09:00 + 18:00–22:00 (ještě zářijové okno) |
+| 24.–26. 12. | 13:00–24:00 |
+| 31. 12. | 06:00–24:00 |
+
+Výjimky platí jen pro rok 2026; v jiném roce se použijí samotná okna měsíců.
+
+**Pozor na minimální dobu běhu.** V přechodných měsících jsou dva bloky denně
+a několik z nich má jen 3 hodiny (v létě je to jediné okno). Model do bloku
+kratšího, než je minimální doba běhu, KGJ nenastartuje vůbec — ani při
+sebevyšší ceně. S výchozími 4 h tak zůstane nevyužito 642 hodin masky a
+květen až srpen je celý bez provozu. Pro PROM26 nastav **min. dobu běhu 3 h**;
+aplikace na krátké bloky upozorní před spuštěním.
+
+## Změna času v provozním plánu
+
+Data jsou v místním čase včetně letního, takže poslední neděli v březnu chybí
+hodina 02:00–03:00 a poslední neděli v říjnu je dvakrát. V měsíčních listech
+provozního plánu jsou obě políčka označená:
+
+| Změna | Políčko | Proč |
+|---|---|---|
+| jaro | `ZČ` na modré výplni | hodina neexistuje; do počtu P ani X se nezapočítá |
+| podzim | P/X s tlustým modrým rámečkem | hodina proběhla dvakrát; P = KGJ běžela aspoň v jedné z nich |
+
+Obě mají v buňce poznámku a pod tabulkou řádek legendy. Značí se jen tam, kde
+změnu času data skutečně obsahují — obyčejná díra v datech ani data bez
+letního času nic neoznačí.
 
 ## Rychlost solveru
 
