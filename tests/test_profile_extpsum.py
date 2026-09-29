@@ -4,8 +4,6 @@ Zadání: stejné jako EXTPEAK, ale od 1. 6. do 30. 9. včetně nejde brát
 11:00–17:00, zato jdou navíc 04:00–06:00 a 22:00–24:00.
 """
 
-from pathlib import Path
-
 import pytest
 
 from conftest import make_df

@@ -68,6 +68,8 @@ PROFILE_COLORS = {
     'extpsum': '#E91E63',  # růžová
     'season':     '#795548',  # hnědá
     'seasonplus': '#827717',  # olivová
+    'p':          '#3F51B5',  # indigo
+    'prom26':     '#009688',  # teal
     'offpeak': '#9C27B0',  # fialová
     'special': '#00BCD4',  # tyrkysová
     'custom':  '#607D8B',  # šedá
@@ -136,9 +138,12 @@ from opt_core import (
     CZ_HOLIDAYS_COVERED_YEARS,
     HOUR_LABELS,
     MONTH_NAMES_FULL,
+    build_hour_month_matrix,
     build_month_grid,
     calculate_smoothness_metrics,
+    find_dst_hours,
     run_optimization_with_profile,
+    short_blocks,
 )
 
 # Výchozí časový limit CBC na jeden běh solveru [s]. None = bez limitu.
@@ -292,7 +297,8 @@ def build_parameters_df(params, uses):
             add('KGJ', 'Fixní cena plynu [€/MWh]', p.get('kgj_gas_fix_price', '–'))
         # Fixní výkupní cena EE per profil — pouze zapnuté checkboxy
         for prof in ('free', 'base', 'peak', 'extpeak', 'extpsum',
-                     'season', 'seasonplus', 'offpeak', 'special'):
+                     'season', 'seasonplus', 'p', 'prom26', 'offpeak',
+                     'special'):
             if p.get(f'kgj_ee_fix_{prof}'):
                 add('KGJ', f'Fixní výkupní cena EE — {prof.upper()} [€/MWh]',
                     p.get(f'kgj_ee_fix_price_{prof}', '–'))
@@ -360,9 +366,21 @@ def to_excel_scenarios(scenarios, params=None, uses=None):
         workbook = writer.book
         hdr_fmt, num_fmt, txt_fmt, grn_fmt = _wb_formats(workbook)
 
-        # List: Porovnání scénářů
+        # List: Porovnání scénářů + pod ním pro každý profil přehled hodin
         comp_df = create_scenario_comparison_df(scenarios)
-        _write_sheet(writer, comp_df, 'Porovnání scénářů', hdr_fmt, num_fmt, txt_fmt)
+        sheet1 = _safe_sheet('Porovnání scénářů')
+        _write_sheet(writer, comp_df, sheet1, hdr_fmt, num_fmt, txt_fmt)
+        ws1 = writer.sheets[sheet1]
+        row = len(comp_df) + 3
+        ws1.write(row - 1, 0, 'V jakých hodinách profily jedou '
+                              '(počet dní v provozu)', grn_fmt)
+        for profile, scenario in scenarios.items():
+            if scenario['result'] is None:
+                continue
+            matrix = build_hour_month_matrix(scenario['result']['res'])
+            row = _write_hour_matrix(workbook, ws1, row, matrix,
+                                     f'Profil {profile.upper()}',
+                                     hdr_fmt, num_fmt)
 
         # List: Breakdown příjmů/nákladů
         bd_rows = []
@@ -404,12 +422,77 @@ def to_excel_scenarios(scenarios, params=None, uses=None):
 
 
 
-def _write_month_sheet(workbook, sheet_name, month_label, days, grid, fmts):
-    """Zapíše jeden měsíční list s mřížkou provozu podle předlohy plan_pr.xlsx."""
+def _write_hour_matrix(workbook, ws, row, matrix, title, hdr_fmt, num_fmt):
+    """Zapíše tabulku 'v kterých hodinách profil jede' a vrátí první volný řádek.
+
+    Sloupce jsou měsíce, řádky hodinové intervaly, hodnota počet dní v provozu.
+    Barevná škála dělá z tabulky heatmapu, takže je tvar profilu vidět na první
+    pohled i bez čtení čísel.
+    """
+    n_cols = len(matrix.columns)
+    # Sloupce uz muzou mit z hlavni tabulky textovy format, takze cislum
+    # predepisujeme format primo v bunce - ten ma prednost pred sloupcovym.
+    int_fmt = workbook.add_format({'num_format': '0'})
+    lbl_fmt = workbook.add_format({'num_format': '@'})
+
+    ws.write(row, 0, title, hdr_fmt)
+    hdr = row + 1
+    ws.write(hdr, 0, 'hodina', hdr_fmt)
+    for j, col in enumerate(matrix.columns):
+        ws.write(hdr, j + 1, str(col), hdr_fmt)
+
+    for i, label in enumerate(matrix.index):
+        ws.write_string(hdr + 1 + i, 0, label, lbl_fmt)
+        for j in range(n_cols):
+            ws.write_number(hdr + 1 + i, j + 1, int(matrix.iloc[i, j]), int_fmt)
+
+    total = hdr + 25
+    ws.write(total, 0, 'celkem [h]', hdr_fmt)
+    for j in range(n_cols):
+        c = xl_col_to_name(j + 1)
+        ws.write_formula(total, j + 1,
+                         f'=SUM({c}{hdr + 2}:{c}{hdr + 25})', hdr_fmt)
+
+    if n_cols:
+        # Nula = do te hodiny profil vubec nechodi, at je videt jako prazdno.
+        ws.conditional_format(hdr + 1, 1, hdr + 24, n_cols, {
+            'type': 'cell', 'criteria': '==', 'value': 0,
+            'format': workbook.add_format({'font_color': '#BFBFBF'}),
+        })
+        ws.conditional_format(hdr + 1, 1, hdr + 24, n_cols, {
+            'type': '2_color_scale',
+            'min_color': '#FFFFFF', 'max_color': '#4CAF50',
+        })
+    return total + 2
+
+
+# Zmena casu v mesicni mrizce. Text 'ZČ' neobsahuje P, X ani F, takze ho
+# nechyti ani podminene formatovani, ani vzorce COUNTIF v souctech.
+DST_GAP_MARK = 'ZČ'
+DST_COLOR, DST_FONT = '#BDD7EE', '#1F4E79'
+
+
+def _write_month_sheet(workbook, sheet_name, month_label, days, grid, fmts,
+                       dst=None):
+    """Zapíše jeden měsíční list s mřížkou provozu podle předlohy plan_pr.xlsx.
+
+    `dst` je výsledek `find_dst_hours` — políčka se změnou času dostanou
+    vlastní barvu, poznámku v buňce a řádek v legendě pod tabulkou.
+    """
     hdr_fmt, cell_fmt, link_fmt, note_fmt = fmts
+    dst = dst or {}
     ws = workbook.add_worksheet(_safe_sheet(sheet_name))
     n = len(days)
     last_col = xl_col_to_name(n)          # sloupec A je popisek, dny zacinaji na B
+
+    # Jaro: hodina neexistuje -> vlastni vypln misto bile prazdne bunky.
+    gap_fmt = workbook.add_format({'align': 'center', 'border': 1,
+                                   'bg_color': DST_COLOR,
+                                   'font_color': DST_FONT, 'bold': True})
+    # Podzim: hodina probehla dvakrat, P/X v ni plati dal. Vypln dela
+    # podminene formatovani, takze zmenu casu nese tlusty ramecek.
+    double_fmt = workbook.add_format({'align': 'center', 'border': 5,
+                                      'border_color': DST_FONT})
 
     ws.write_url(0, 0, "internal:'Přehled'!A1", link_fmt, 'zpět na úvod')
 
@@ -429,7 +512,19 @@ def _write_month_sheet(workbook, sheet_name, month_label, days, grid, fmts):
         ws.write(4 + h, 0, HOUR_LABELS[h], hdr_fmt)
         for i in range(n):
             val = grid[h][i] if grid else None
-            if val is not None:
+            kind = dst.get((days[i], h))
+            if kind == 'gap':
+                ws.write_string(4 + h, i + 1, DST_GAP_MARK, gap_fmt)
+                ws.write_comment(4 + h, i + 1,
+                                 f'Přechod na letní čas: hodina {HOUR_LABELS[h]} '
+                                 f'tento den neexistuje.')
+            elif kind == 'double' and val is not None:
+                ws.write_string(4 + h, i + 1, val, double_fmt)
+                ws.write_comment(4 + h, i + 1,
+                                 f'Přechod na zimní čas: hodina {HOUR_LABELS[h]} '
+                                 f'proběhla dvakrát. P = KGJ běžela aspoň '
+                                 f'v jedné z nich.')
+            elif val is not None:
                 ws.write_string(4 + h, i + 1, val, cell_fmt)
 
     # Zive vzorce, aby rucni prepsani bunky prepocitalo soucty
@@ -448,6 +543,20 @@ def _write_month_sheet(workbook, sheet_name, month_label, days, grid, fmts):
         ws.write_formula(34, 1, f'=SUM(B31:{last_col}31)')
     ws.write(33, 2, 'Provoz s dodávkou tepla a elektřiny do sítí', note_fmt)
     ws.write(34, 2, 'Hodiny klidu, tj. bez provozu', note_fmt)
+
+    # Legenda ke zmene casu - jen v mesici, kde nejaka je
+    kinds = set(dst.values())
+    row = 36
+    if 'gap' in kinds:
+        ws.write_string(row, 1, DST_GAP_MARK, gap_fmt)
+        ws.write(row, 2, 'Změna času – přechod na letní čas, hodina '
+                         '02:00–03:00 ten den neexistuje', note_fmt)
+        row += 1
+    if 'double' in kinds:
+        ws.write_string(row, 1, 'P', double_fmt)
+        ws.write(row, 2, 'Změna času – přechod na zimní čas, hodina '
+                         '02:00–03:00 proběhla dvakrát (P = běželo aspoň '
+                         'v jedné z nich)', note_fmt)
 
     # Barvy jako v predloze. Pravidlo pro 'F' se nepouziva, ale zustava,
     # aby se rucne dopsana zluta obarvila sama.
@@ -525,7 +634,8 @@ def to_excel_operating_plan(scenario, profile, params=None, uses=None):
         for k, month in enumerate(months):
             label = MONTH_NAMES_FULL.get(int(month), str(month))
             days, grid = build_month_grid(res, int(month))
-            _write_month_sheet(workbook, label, label, days, grid, fmts)
+            _write_month_sheet(workbook, label, label, days, grid, fmts,
+                               dst=find_dst_hours(res, int(month)))
 
             sub = res.loc[times.dt.month == month]
             sub_on = int((sub['KGJ on'] > 0.5).sum())
@@ -536,6 +646,13 @@ def to_excel_operating_plan(scenario, profile, params=None, uses=None):
                                      sub['Dodáno tepla [MW]'].sum(),
                                      sub['EE z KGJ [MW]'].sum())):
                 ov.write_number(row0 + 1 + k, j + 1, float(val), num_fmt)
+
+        # ── Prehled: v jakych hodinach profil jede ──
+        hrow = row0 + len(months) + 3
+        ov.write(hrow - 1, 0, 'V jakých hodinách profil jede '
+                              '(počet dní v provozu)', grn_fmt)
+        _write_hour_matrix(workbook, ov, hrow, build_hour_month_matrix(res),
+                           f'Profil {profile.upper()}', hdr_fmt, num_fmt)
 
         # ── List: Parametry ──
         params_df = build_parameters_df(params, uses)
@@ -738,14 +855,16 @@ with st.sidebar:
     profiles_to_run = st.multiselect(
         "Které profily testovat?",
         options=['free', 'base', 'peak', 'extpeak', 'extpsum',
-                 'season', 'seasonplus', 'offpeak', 'special', 'custom'],
+                 'season', 'seasonplus', 'p', 'prom26', 'offpeak', 'special',
+                 'custom'],
         default=['free', 'base', 'peak', 'extpeak', 'offpeak'],
         help="Spusť optimalizaci pro vybrané profily a porovnej je"
     )
     st.caption("💡 BASE = KGJ vždy zapnuto 24/7 (ignoruje limit hodin provozu)")
     st.caption(f"📅 PEAK/EXTPEAK/EXTPSUM/OFFPEAK respektují víkendy a CZ státní svátky "
                f"({CZ_HOLIDAYS_COVERED_YEARS[0]}–{CZ_HOLIDAYS_COVERED_YEARS[1]}). "
-               f"SEASON/SEASON+ jedou 7 dní v týdnu — okno určuje jen měsíc a hodina.")
+               f"SEASON/SEASON+/P jedou 7 dní v týdnu — okno určuje jen měsíc a hodina. "
+               f"PROM26 přebírá hodiny z dodané masky, včetně výjimečných dní roku 2026.")
 
     if st.session_state.fwd_data is not None and {'peak', 'extpeak', 'extpsum', 'offpeak'} & set(profiles_to_run):
         _yrs = pd.to_datetime(st.session_state.fwd_data['datetime']).dt.year.unique()
@@ -764,6 +883,8 @@ with st.sidebar:
         'extpsum': {'name': 'ExtPeak + letní úprava',        'hours': None,                                    'desc': 'Jako ExtPeak; VI–IX bez 11–17 h, navíc 4–6 h a 22–24 h'},
         'season':     {'name': 'Season (sezónní okno)',    'hours': None,                                    'desc': '7 dní; I,II,XI,XII 6–22 | III,X 13–23 | IV 15–23 | V–IX 17–23'},
         'seasonplus': {'name': 'Season+ (širší okno)',     'hours': None,                                    'desc': '7 dní; I,II,XI,XII 5–23 | III,X 12–24 | IV 13–24 | V–IX 16–24'},
+        'p':          {'name': 'P (nejlepší FWD hodiny)',  'hours': None,                                    'desc': '7 dní; I 7–23 | II,III 6–22 | IV,V 18–24 | VI–VIII 17–24 | IX 17–23 | X–XII 6–22'},
+        'prom26':     {'name': 'PROM26 (dodaná maska)',    'hours': None,                                    'desc': 'I,II,XI,XII 6–22 | III,X 6–10+16–22 | IV 6–9+17–22 | V 6–9+19–22 | VI–VIII 6–9 | IX 6–9+18–22'},
         'offpeak': {'name': 'Offpeak (víkendy+svátky+noc)', 'hours': list(range(0, 8)) + list(range(20, 24)), 'desc': 'Víkendy/svátky 24 h + Po-Pá 20-8 h'},
         'special': {'name': 'Special (měsíční)',           'hours': None,                                    'desc': 'I-V,IX-XII: Po06→Pá22 + So06→Ne22 | VI-VIII: Po06→Čt22'},
     }
@@ -1013,6 +1134,14 @@ with t_tech:
             if p['kgj_ee_fix_seasonplus']:
                 p['kgj_ee_fix_price_seasonplus'] = st.number_input("SEASON+ cena [€/MWh]",
                     value=142.0, key="ni_kgj_fix_seasonplus")
+            p['kgj_ee_fix_p'] = st.checkbox("Fix cena – P", value=False, key="cb_kgj_fix_p")
+            if p['kgj_ee_fix_p']:
+                p['kgj_ee_fix_price_p'] = st.number_input("P cena [€/MWh]",
+                    value=150.0, key="ni_kgj_fix_p")
+            p['kgj_ee_fix_prom26'] = st.checkbox("Fix cena – PROM26", value=False, key="cb_kgj_fix_prom26")
+            if p['kgj_ee_fix_prom26']:
+                p['kgj_ee_fix_price_prom26'] = st.number_input("PROM26 cena [€/MWh]",
+                    value=150.0, key="ni_kgj_fix_prom26")
             p['kgj_ee_fix_offpeak'] = st.checkbox("Fix cena – OFFPEAK", value=False, key="cb_kgj_fix_offpeak")
             if p['kgj_ee_fix_offpeak']:
                 p['kgj_ee_fix_price_offpeak'] = st.number_input("OFFPEAK cena [€/MWh]",
@@ -1375,11 +1504,43 @@ if st.session_state.fwd_data is not None and loc_file is not None:
     # ════════════════════════════════════════════════
     # SPUŠTĚNÍ ANALÝZY – jedno tlačítko, vše najednou
     # ════════════════════════════════════════════════
-    n_runs = len(profiles_to_run) * pd.to_datetime(df['datetime']).dt.month.nunique()
-    st.markdown(
-        f"Profily: **{', '.join(pr.upper() for pr in profiles_to_run)}** · "
-        f"Celé období + měsíční analýza ({n_runs} kombinací)"
-    )
+    # Blok kratsi nez min. doba behu se neda pouzit vubec — model KGJ do nej
+    # nenastartuje ani pri sebevyssi cene. Radeji to rict predem nez vratit
+    # nulovy provoz bez vysvetleni.
+    if use_kgj:
+        _mrt = int(p.get('k_min_runtime', 1) or 1)
+        for _prof in profiles_to_run:
+            _short = short_blocks(_prof, _mrt)
+            if _short:
+                _desc = '; '.join(
+                    f"{MONTH_NAMES.get(m, m)} " + ', '.join(f"{lo:02d}–{hi:02d}"
+                                                          for lo, hi in bl)
+                    for m, bl in sorted(_short.items()))
+                st.warning(
+                    f"⚠️ **{_prof.upper()}**: min. doba běhu je {_mrt} h, ale "
+                    f"některé bloky profilu jsou kratší — KGJ do nich "
+                    f"nenastartuje vůbec: {_desc}. Pro plné využití profilu "
+                    f"nastav min. dobu běhu na "
+                    f"{min(hi - lo for bl in _short.values() for lo, hi in bl)} h.")
+
+    n_months = pd.to_datetime(df['datetime']).dt.month.nunique()
+    run_monthly = st.checkbox(
+        "Spustit i měsíční optimalizaci profilů", value=False,
+        key="cb_run_monthly",
+        help="Každý měsíc × každý profil je samostatná úloha, takže tohle je "
+             "zdaleka nejdelší část výpočtu. Bez zaškrtnutí se počítá jen "
+             "porovnání profilů přes celé období.")
+    if run_monthly:
+        st.markdown(
+            f"Profily: **{', '.join(pr.upper() for pr in profiles_to_run)}** · "
+            f"Celé období + měsíční analýza "
+            f"({len(profiles_to_run)} + {len(profiles_to_run) * n_months} úloh)"
+        )
+    else:
+        st.markdown(
+            f"Profily: **{', '.join(pr.upper() for pr in profiles_to_run)}** · "
+            f"Jen celé období ({len(profiles_to_run)} úloh)"
+        )
 
     if st.button("🚀 Spustit analýzu všech profilů", type="primary", key="btn_run_all"):
         with st.spinner("⏳ Spouštím optimalizaci pro všechny profily …"):
@@ -1399,13 +1560,15 @@ if st.session_state.fwd_data is not None and loc_file is not None:
                 st.error("❌ Žádný profil nebyl úspěšně vypočten. Zkontroluj parametry.")
                 st.stop()
 
-            # 2) Měsíční analýza
-            monthly_res = run_monthly_profile_analysis(
-                df=df, params=p, uses=uses,
-                profiles_to_run=profiles_to_run,
-                custom_hours=_ch, max_starts_per_month=_ms,
-                time_limit=solver_time_limit, gap_rel=solver_gap_rel
-            )
+            # 2) Měsíční analýza – jen na vyžádání, je to nejdelší část
+            monthly_res = None
+            if run_monthly:
+                monthly_res = run_monthly_profile_analysis(
+                    df=df, params=p, uses=uses,
+                    profiles_to_run=profiles_to_run,
+                    custom_hours=_ch, max_starts_per_month=_ms,
+                    time_limit=solver_time_limit, gap_rel=solver_gap_rel
+                )
 
         st.session_state.scenario_results = scenarios
         st.session_state.monthly_profile_results = monthly_res

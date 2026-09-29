@@ -98,6 +98,92 @@ SEASONPLUS_WINDOWS = {
     8: (16, 24), 9: (16, 24),                             # 8 h
 }
 
+# Profil P — pásmo poskládané z nejlepších FWD hodin ceny EE.
+# Okna nejsou odhad: pro každý měsíc se prošla všechna souvislá okna a přes
+# měsíce se to složilo batohem na rozpočet ~4000 h se stropem 16 h na blok.
+# Účelová funkce je součet FWD ceny při pevné velikosti pásma, tedy přímo
+# jeho průměrná cena. Na datech 2026 vychází 91,5 €/MWh proti 97,4 €/MWh,
+# které by dal volný výběr 4000 nejdražších hodin — to je cena za to, že
+# pásmo je uvnitř měsíce konzistentní.
+P_WINDOWS = {
+    1: (7, 23),                                           # 16 h
+    2: (6, 22),  3: (6, 22),                              # 16 h
+    4: (18, 24), 5: (18, 24),                             # 6 h
+    6: (17, 24), 7: (17, 24), 8: (17, 24),                # 7 h
+    9: (17, 23),                                          # 6 h
+    10: (6, 22), 11: (6, 22), 12: (6, 22),                # 16 h
+}
+
+# Profily, které jsou dané jen dvojicí (měsíc → okno) a jedou 7 dní v týdnu.
+MONTH_WINDOW_PROFILES = {
+    'season':     SEASON_WINDOWS,
+    'seasonplus': SEASONPLUS_WINDOWS,
+    'p':          P_WINDOWS,
+}
+
+# PROM26 — pásmo dodané jako hodinová maska 0/1 na rok 2026. Maska se beze
+# zbytku rozkládá na okna po měsících plus pět výjimečných dní, takže ji
+# držíme v téhle podobě: dá se přečíst a zkontrolovat, na rozdíl od 8760
+# nul a jedniček. Na rozdíl od ostatních profilů má v přechodných měsících
+# dva bloky denně (ráno + večer), tedy dva starty.
+PROM26_WINDOWS = {
+    1: ((6, 22),),  2: ((6, 22),),
+    3: ((6, 10), (16, 22)),
+    4: ((6, 9), (17, 22)),
+    5: ((6, 9), (19, 22)),
+    6: ((6, 9),),   7: ((6, 9),),   8: ((6, 9),),
+    9: ((6, 9), (18, 22)),
+    10: ((6, 10), (16, 22)),
+    11: ((6, 22),), 12: ((6, 22),),
+}
+
+# Dny, kdy předloha neodpovídá oknu svého měsíce — převzato beze změny.
+# Platí jen pro rok 2026; v jiném roce se použijí samotná okna.
+PROM26_EXCEPTIONS = {
+    _dt.date(2026, 1, 1):   (),                        # Nový rok: klid
+    _dt.date(2026, 10, 1):  ((6, 9), (18, 22)),        # ještě zářijové okno
+    _dt.date(2026, 12, 24): ((13, 24),),               # Vánoce: odpoledne
+    _dt.date(2026, 12, 25): ((13, 24),),
+    _dt.date(2026, 12, 26): ((13, 24),),
+    _dt.date(2026, 12, 31): ((6, 24),),                # Silvestr: do půlnoci
+}
+
+
+def prom26_blocks(day):
+    """Bloky provozu PROM26 pro daný den: výjimka, jinak okna měsíce."""
+    return PROM26_EXCEPTIONS.get(day, PROM26_WINDOWS[day.month])
+
+
+def profile_blocks(profile_type):
+    """{měsíc: bloky} pro profily daného okna po měsících, jinak None.
+
+    Slouží ke kontrole, jestli se do bloku vůbec vejde minimální doba běhu.
+    U PROM26 se vrací jen okna měsíců; výjimečné dny kontrolu nemění.
+    """
+    if profile_type in MONTH_WINDOW_PROFILES:
+        return {m: (w,) for m, w in MONTH_WINDOW_PROFILES[profile_type].items()}
+    if profile_type == 'prom26':
+        return dict(PROM26_WINDOWS)
+    return None
+
+
+def short_blocks(profile_type, min_runtime):
+    """Měsíce, ve kterých je některý blok kratší než minimální doba běhu.
+
+    Minimální doba běhu je v modelu `on[t+1..t+k-1] >= start[t]`, takže do
+    bloku kratšího než k hodin se KGJ nedá nastartovat vůbec — ani při
+    sebevyšší ceně. Vrací {měsíc: [(od, do), ...]} jen s těmi krátkými bloky.
+    """
+    blocks = profile_blocks(profile_type)
+    if not blocks or not min_runtime or min_runtime <= 1:
+        return {}
+    out = {}
+    for m, bl in blocks.items():
+        short = [(lo, hi) for lo, hi in bl if hi - lo < min_runtime]
+        if short:
+            out[m] = short
+    return out
+
 
 def create_profile_constraints(df, profile_type, custom_hours=None):
     """
@@ -113,6 +199,11 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
                 šířka podle měsíce: I,II,XI,XII 06–22 | III,X 13–23 |
                 IV 15–23 | V–IX 17–23
       SEASONPLUS – SEASON s okny širšími o 1–2 h na každém konci
+      P       – pásmo z nejlepších FWD hodin ceny EE, 7 dní v týdnu:
+                I 07–23 | II,III 06–22 | IV,V 18–24 | VI–VIII 17–24 |
+                IX 17–23 | X–XII 06–22
+      PROM26  – dodaná hodinová maska 2026: okna po měsících (v přechodných
+                měsících ráno + večer) a pět výjimečných dní
       OFFPEAK – doplněk peaku v rámci 24/7: víkendy a svátky celý den
                 + po–pá hodiny 0..7 a 20..23
       SPECIAL – měsíční vzor s denním rytmem (CZ svátky se neuplatňují):
@@ -149,15 +240,21 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
                 allowed = 6 <= h < 22
             constraints.append(0 if allowed else -1)
 
-    elif profile_type in ('season', 'seasonplus'):
+    elif profile_type in MONTH_WINDOW_PROFILES:
         # Okno je dané jen měsícem a hodinou — jede se i o víkendech
         # a svátcích, protože teplo se topí každý den stejně.
-        windows = SEASON_WINDOWS if profile_type == 'season' else SEASONPLUS_WINDOWS
+        windows = MONTH_WINDOW_PROFILES[profile_type]
         months = dt.dt.month.values
         constraints = []
         for h, m in zip(hours, months):
             lo, hi = windows[int(m)]
             constraints.append(0 if lo <= h < hi else -1)
+
+    elif profile_type == 'prom26':
+        constraints = []
+        for h, day in zip(hours, dt.dt.date.values):
+            blocks = prom26_blocks(day)
+            constraints.append(0 if any(lo <= h < hi for lo, hi in blocks) else -1)
 
     elif profile_type == 'offpeak':
         constraints = [0 if ((not bd) or h < 8 or h >= 20) else -1
@@ -890,6 +987,74 @@ def build_month_grid(res, month):
     for (day, hour), on in running.items():
         grid[hour][day - 1] = 'P' if on else 'X'
     return days, grid
+
+
+def _last_sunday(year, month):
+    last = _dt.date(year, month, calendar.monthrange(year, month)[1])
+    return last - _dt.timedelta(days=(last.weekday() - 6) % 7)
+
+
+def find_dst_hours(res, month):
+    """Políčka měsíční mřížky, ve kterých se mění čas.
+
+    Vrací {(den, hodina): 'gap' | 'double'}:
+      'gap'    – přechod na letní čas (poslední neděle v březnu): hodina
+                 02:00–03:00 ten den neexistuje, v mřížce by zůstala prázdná
+      'double' – přechod na zimní čas (poslední neděle v říjnu): hodina
+                 02:00–03:00 proběhla dvakrát a v mřížce je sloučená
+
+    Hledá se jen tam, kde změna podle pravidla EU skutečně je, a jen když ji
+    data opravdu obsahují. Obyčejná díra v datech se tak za změnu času
+    nevydává a data bez letního času (každý den 24 h) nic neoznačí.
+    """
+    if month not in (3, 10):
+        return {}
+    times = pd.to_datetime(res['Čas'])
+    sub = times[times.dt.month == month]
+    if sub.empty:
+        return {}
+    sunday = _last_sunday(int(sub.dt.year.iloc[0]), month)
+    hrs = sub[sub.dt.date == sunday].dt.hour
+    n2 = int((hrs == 2).sum())
+    if month == 3 and n2 == 0 and {1, 3} <= set(hrs):
+        # sousedni hodiny tam jsou, takze nejde o zacatek/konec obdobi
+        return {(sunday.day, 2): 'gap'}
+    if month == 10 and n2 == 2:
+        return {(sunday.day, 2): 'double'}
+    return {}
+
+
+MONTH_NAMES_ROMAN = {1: 'I', 2: 'II', 3: 'III', 4: 'IV', 5: 'V', 6: 'VI',
+                     7: 'VII', 8: 'VIII', 9: 'IX', 10: 'X', 11: 'XI',
+                     12: 'XII'}
+
+
+def build_hour_month_matrix(res):
+    """Zjednodušený přehled: v kterých hodinách dne profil v daném měsíci jede.
+
+    Vrací DataFrame 24 × (měsíce v datech). Řádky jsou hodinové intervaly,
+    hodnota je **počet dní** toho měsíce, kdy KGJ v té hodině běžela. Nula
+    znamená, že do té hodiny profil vůbec nechodí.
+
+    Čte se `KGJ on` (nasazení), stejně jako měsíční mřížka — doběhová hodina
+    po odstavení se tedy nepočítá jako provoz. Duplicitní razítko při přechodu
+    na zimní čas se bere jako jeden den, aby se ten den nezapočítal dvakrát.
+    """
+    times = pd.to_datetime(res['Čas'])
+    on = (res['KGJ on'] > 0.5).values
+    months = sorted(int(m) for m in times.dt.month.unique())
+
+    # (mesic, den, hodina) -> bezelo aspon v jednom ze zaznamu
+    seen = {}
+    for m, d, h, run in zip(times.dt.month, times.dt.day, times.dt.hour, on):
+        key = (int(m), int(d), int(h))
+        seen[key] = seen.get(key, False) or bool(run)
+
+    data = {MONTH_NAMES_ROMAN[m]: [0] * 24 for m in months}
+    for (m, _day, h), run in seen.items():
+        if run:
+            data[MONTH_NAMES_ROMAN[m]][h] += 1
+    return pd.DataFrame(data, index=HOUR_LABELS)
 
 
 def month_grid_totals(grid):
