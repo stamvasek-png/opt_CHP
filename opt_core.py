@@ -127,7 +127,8 @@ P_WINDOWS = {
 # k nejdražším hodinám roku (19 h průměrně 291 €/MWh).
 #
 # S má strop 16 h na blok (180,1 €/MWh, 3453 h v roce 2027).
-# T strop nemá (182,1 €/MWh, 3435 h) — zimní bloky jsou 19–22 h dlouhé.
+# T strop nemá (182,9 €/MWh, 3351 h) — v lednu a únoru jede 19 h denně.
+# Únor měl z výběru 02–24; na přání má stejné okno jako leden.
 S_WINDOWS = {
     1: (6, 22),  2: (6, 22),                              # 16 h
     3: (16, 24),                                          # 8 h
@@ -139,8 +140,7 @@ S_WINDOWS = {
     12: (7, 23),                                          # 16 h
 }
 T_WINDOWS = {
-    1: (5, 24),                                           # 19 h
-    2: (2, 24),                                           # 22 h
+    1: (5, 24),  2: (5, 24),                              # 19 h
     3: (17, 23),                                          # 6 h
     4: (18, 23),                                          # 5 h
     5: (19, 23),                                          # 4 h
@@ -274,6 +274,25 @@ WEEK_TEMPLATE_PROFILES = {
     'v': V_WEEK_BLOCKS,
 }
 
+# Profil W — zadaný tabulkou po měsících: pracovní dny a soboty mají vlastní
+# okno, neděle a státní svátky stojí. Svátek se chová jako neděle i tehdy,
+# když připadne na sobotu.
+W_WINDOWS = {                                   # měsíc → (Po–Pá, sobota)
+    1: ((6, 24), (7, 22)),   2: ((6, 24), (7, 22)),
+    3: ((16, 22), (16, 22)),
+    4: ((17, 23), (17, 23)),
+    5: ((18, 24), (18, 24)), 6: ((18, 24), (18, 24)),
+    7: ((18, 24), (18, 24)), 8: ((18, 24), (18, 24)),
+    9: ((18, 24), (18, 24)),
+    10: ((17, 23), (17, 23)),
+    11: ((6, 24), (7, 22)),  12: ((6, 24), (7, 22)),
+}
+
+# Profily s oknem po měsících zvlášť pro pracovní den a sobotu.
+DAYTYPE_WINDOW_PROFILES = {
+    'w': W_WINDOWS,
+}
+
 # PROM26 — pásmo dodané jako hodinová maska 0/1 na rok 2026. Maska se beze
 # zbytku rozkládá na okna po měsících plus pět výjimečných dní, takže ji
 # držíme v téhle podobě: dá se přečíst a zkontrolovat, na rozdíl od 8760
@@ -320,6 +339,9 @@ def profile_blocks(profile_type):
                 for m, w in MONTH_WINDOW_PROFILES[profile_type].items()}
     if profile_type == 'prom26':
         return dict(PROM26_WINDOWS)
+    if profile_type in DAYTYPE_WINDOW_PROFILES:
+        return {m: tuple(dict.fromkeys(w for w in pair if w[1] > w[0]))
+                for m, pair in DAYTYPE_WINDOW_PROFILES[profile_type].items()}
     return None
 
 
@@ -363,7 +385,7 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
       S, T    – pevné pásmo nad FWD 2027, 7 dní v týdnu, září 18–23:
                 S (blok ≤ 16 h) I,II,XI 06–22 | III 16–24 | IV–VIII 18–24 |
                               IX 18–23 | X 15–22 | XII 07–23
-                T (bez stropu)  I 05–24 | II 02–24 | III 17–23 | IV 18–23 |
+                T (bez stropu)  I,II 05–24 | III 17–23 | IV 18–23 |
                               V 19–23 | VI,VII 18–24 | VIII 18–23 |
                               IX 18–23 | X 16–21 | XI 06–23 | XII 07–21
       U       – týdenní šablona po měsících (bloky přes více dní), běh
@@ -374,6 +396,9 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
                 Čt 13 → So 23 | III denně 17–24 | IV,VI–VIII denně 18–02 |
                 V denně 19–01 | IX bez provozu |
                 X Po 06 → Čt 23 + Pá 15–23 + So 16–21
+      W       – pracovní dny a soboty s oknem po měsících, neděle a CZ
+                svátky stojí: I,II,XI,XII Po–Pá 06–24, So 07–22 | III 16–22 |
+                IV,X 17–23 | V–IX 18–24 (III–X So stejně jako Po–Pá)
       OFFPEAK – doplněk peaku v rámci 24/7: víkendy a svátky celý den
                 + po–pá hodiny 0..7 a 20..23
       SPECIAL – měsíční vzor s denním rytmem (CZ svátky se neuplatňují):
@@ -434,6 +459,24 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
         weekdays = dt.dt.weekday.values
         constraints = [0 if int(wd) * 24 + int(h) in tmpl[int(m)] else -1
                        for h, m, wd in zip(hours, months, weekdays)]
+
+    elif profile_type in DAYTYPE_WINDOW_PROFILES:
+        # Pracovní den a sobota mají okno podle měsíce, neděle a svátky stojí
+        # (svátek i tehdy, když připadne na sobotu).
+        windows = DAYTYPE_WINDOW_PROFILES[profile_type]
+        months = dt.dt.month.values
+        weekdays = dt.dt.weekday.values
+        constraints = []
+        for h, m, wd, bd, day in zip(hours, months, weekdays, bdays,
+                                     dt.dt.date.values):
+            workday, saturday = windows[int(m)]
+            if bd:
+                lo, hi = workday
+            elif wd == 5 and day not in CZ_HOLIDAYS:
+                lo, hi = saturday
+            else:
+                lo, hi = 0, 0
+            constraints.append(0 if lo <= h < hi else -1)
 
     elif profile_type == 'offpeak':
         constraints = [0 if ((not bd) or h < 8 or h >= 20) else -1
@@ -978,22 +1021,24 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
     # optimalitu, coz je u rocni ulohy s akumulaci exponencialne drahe -
     # najit dobre reseni je rychle, dokazat ze lepsi neexistuje uz ne.
     # 1 % je hluboko pod nejistotou FWD krivky, ze ktere se pocita.
-    def cbc(warm=False):
+    def cbc():
         return pulp.PULP_CBC_CMD(msg=0, timeLimit=time_limit,
-                                 gapRel=gap_rel if gap_rel else None,
-                                 warmStart=warm)
+                                 gapRel=gap_rel if gap_rel else None)
 
     status = model.solve(cbc())
     # Po celých měsících ve dvou krocích: první řešení vybralo nejlepší celé
     # měsíce do limitu hodin. Ty se teď zafixují a zbytek limitu smí jít do
     # jednoho z nevybraných měsíců, který tím bude neúplný. Měsíc, který se
     # vyplatí celý a do limitu se vejde, tak zůstane celý.
+    # Bez warm startu: CBC na Windows ho bez keepFiles=True nedostane (PuLP to
+    # u každého běhu hlásí varováním) a s pevnými celými měsíci je druhý krok
+    # rychlý i tak.
     if month_part and status in (1, 2):
         for per, full in month_full.items():
             val = int(round(full.value() or 0))
             full.lowBound = full.upBound = val
             month_part[per].upBound = 1 - val
-        status = model.solve(cbc(warm=True))
+        status = model.solve(cbc())
     if status not in (1, 2):
         return None
 

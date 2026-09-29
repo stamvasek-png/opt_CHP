@@ -125,14 +125,15 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 | `p` | pásmo z nejlepších FWD hodin ceny EE (níže) |
 | `prom26` | dodaná hodinová maska na rok 2026 (níže) |
 | `s` | pevné pásmo nad FWD 2027 (3453 h), blok max. 16 h (níže) |
-| `t` | totéž bez stropu délky bloku (3435 h, níže) |
+| `t` | totéž bez stropu délky bloku (3351 h, níže) |
 | `u` | týdenní šablona po měsících, bloky přes více dní (7032 h, níže) |
 | `v` | plán pro dispečink: blok max. 96 h, pauza min. 16 h, září stojí (4136 h, níže) |
+| `w` | pracovní dny a soboty s oknem po měsících, neděle a svátky stojí (2946 h, níže) |
 | `offpeak` | doplněk peaku: víkendy a svátky celý den + Po–Pá 20:00–08:00 |
 | `special` | měsíční vzor s denním rytmem |
 | `custom` | ručně vybrané hodiny |
 
-`peak`, `extpeak`, `extpsum` a `offpeak` respektují víkendy i české státní svátky.
+`peak`, `extpeak`, `extpsum`, `offpeak` a `w` respektují víkendy i české státní svátky.
 `season`, `seasonplus`, `p`, `s` a `t` jedou 7 dní v týdnu — okno určuje jen
 měsíc a hodina. `u` a `v` mají pro každý měsíc týdenní šablonu.
 
@@ -269,8 +270,7 @@ výjimkou září, které bylo doplněno dodatečně (níže).
 
 | Měsíc | `s` (blok ≤ 16 h) | `t` (bez stropu) |
 |---|---|---|
-| I | 06:00–22:00 | 05:00–24:00 |
-| II | 06:00–22:00 | 02:00–24:00 |
+| I, II | 06:00–22:00 | 05:00–24:00 |
 | III | 16:00–24:00 | 17:00–23:00 |
 | IV | 18:00–24:00 | 18:00–23:00 |
 | V | 18:00–24:00 | 19:00–23:00 |
@@ -280,20 +280,23 @@ výjimkou září, které bylo doplněno dodatečně (níže).
 | X | 15:00–22:00 | 16:00–21:00 |
 | XI | 06:00–22:00 | 06:00–23:00 |
 | XII | 07:00–23:00 | 07:00–21:00 |
-| **rok 2027** | **3453 h**, FWD 180,1 €/MWh | **3435 h**, FWD 182,1 €/MWh |
+| **rok 2027** | **3453 h**, FWD 180,1 €/MWh | **3351 h**, FWD 182,9 €/MWh |
 
 **Září 18–23** je doplněné nad rámec výběru: poptávka po teple je tam celý
 měsíc 0,338 MW, na plný výkon KGJ (0,605 MW tepla) tedy nestačí, ale KGJ se
 vejde na minimální zatížení 50 % (0,3025 MW). Za to přidá 150 h s průměrnou
 FWD 198,4 €/MWh — zářijové večery patří k nejdražším hodinám roku.
 
+**Únor u `t`** je upravený dodatečně: výběr dával 02:00–24:00, na přání má
+stejné okno jako leden (05:00–24:00).
+
 Letní okna začínají v 18:00 (resp. 19:00), takže solární propad kolem poledne
 i jeho záporné ceny zůstávají mimo pásmo.
 
 Rozdíl mezi nimi je jen v délce zimního bloku. `s` nikde nejede přes 16 h.
-`t` je o 2,1 €/MWh dražší, ale v lednu a únoru běží 19–22 h denně.
+`t` je o 2,8 €/MWh dražší, ale v lednu a únoru běží 19 h denně.
 Pro srovnání: bez září by volný výběr 3300 nejdražších hodin měl 191,4 €/MWh
-proti 179,3 (`s`) a 181,4 €/MWh (`t`) — rozdíl je cena za to, že pásmo je
+proti 179,3 (`s`) a 182,2 €/MWh (`t`) — rozdíl je cena za to, že pásmo je
 uvnitř měsíce konzistentní.
 
 ### U
@@ -393,6 +396,23 @@ jen 28. 10. by model v okně zastavil na 6 h.
 Pravidla 96/16/4 a 1 start denně jsou ověřená na kalendáři 2027 včetně
 přechodů mezi měsíci a změny času. V jiném roce připadnou hranice měsíců na
 jiné dny v týdnu a je třeba je ověřit znovu.
+
+### W
+
+Zadaný tabulkou po měsících: pracovní dny a soboty mají vlastní okno,
+**neděle a státní svátky stojí**. Svátek se chová jako neděle i tehdy, když
+připadne na sobotu (v roce 2027 např. 1. 5. a 8. 5.).
+
+| Měsíc | Po–Pá | Sobota | Neděle a svátky |
+|---|---|---|---|
+| I, II, XI, XII | 06:00–24:00 | 07:00–22:00 | stojí |
+| III | 16:00–22:00 | 16:00–22:00 | stojí |
+| IV, X | 17:00–23:00 | 17:00–23:00 | stojí |
+| V–IX | 18:00–24:00 | 18:00–24:00 | stojí |
+
+Za rok 2027 to je **2946 h** s průměrnou FWD 184,3 €/MWh. Svátky bere
+z vestavěného kalendáře (2026–2030); pro jiné roky platí jen víkendy
+a aplikace na to upozorní.
 
 ## Změna času v provozním plánu
 

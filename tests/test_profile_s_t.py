@@ -17,11 +17,11 @@ EXPECTED = {
     's': {1: (6, 22), 2: (6, 22), 3: (16, 24), 4: (18, 24), 5: (18, 24),
           6: (18, 24), 7: (18, 24), 8: (18, 24), 9: (18, 23), 10: (15, 22),
           11: (6, 22), 12: (7, 23)},
-    't': {1: (5, 24), 2: (2, 24), 3: (17, 23), 4: (18, 23), 5: (19, 23),
+    't': {1: (5, 24), 2: (5, 24), 3: (17, 23), 4: (18, 23), 5: (19, 23),
           6: (18, 24), 7: (18, 24), 8: (18, 23), 9: (18, 23), 10: (16, 21),
           11: (6, 23), 12: (7, 21)},
 }
-YEAR_2027 = {'s': 3453, 't': 3435}
+YEAR_2027 = {'s': 3453, 't': 3351}
 WINDOWS = {'s': S_WINDOWS, 't': T_WINDOWS}
 PROFILES = ('s', 't')
 
@@ -96,9 +96,9 @@ def test_s_block_never_exceeds_16h():
 
 
 def test_t_has_longer_winter_blocks():
-    """T se od S liší právě delšími zimními bloky."""
+    """T se od S liší právě delšími zimními bloky; únor má stejně jako leden."""
     assert len(allowed('t', '2027-01-15')) == 19
-    assert len(allowed('t', '2027-02-15')) == 22
+    assert allowed('t', '2027-02-15') == allowed('t', '2027-01-15')
     assert len(allowed('s', '2027-01-15')) == 16
 
 
