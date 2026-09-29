@@ -201,11 +201,6 @@ U_WEEK_BLOCKS = {
     12: (('Ne 08', 'St 23'), ('Čt 07', 'Ne 00')),
 }
 
-# Profily daného týdenní šablonou po měsících.
-WEEK_TEMPLATE_PROFILES = {
-    'u': U_WEEK_BLOCKS,
-}
-
 WEEKDAY_ABBR = ('Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne')
 
 
@@ -228,6 +223,56 @@ def week_hours(blocks):
             b += 168
         out.update(k % 168 for k in range(a, b))
     return out
+
+
+def daily_blocks(start, end):
+    """Stejné okno každý den v týdnu, zapsané jako bloky týdenní šablony.
+
+    `daily_blocks(18, 2)` = každý den 18:00 → 02:00 dalšího dne. Konec je
+    výlučný; konec ≤ začátek znamená přechod přes půlnoc.
+    """
+    nxt = 1 if end <= start else 0
+    return tuple((f'{WEEKDAY_ABBR[d]} {start:02d}',
+                  f'{WEEKDAY_ABBR[(d + nxt) % 7]} {end:02d}') for d in range(7))
+
+
+# Profil V — plán pro dispečink nad FWD křivkou 2027 (29. 9. 2026): blok
+# nejvýš 96 h, pak aspoň 16 h pauza. Denně opakovaný blok tak má nejvýš 8 h
+# (24 − 16) a týdně se vejde nejvýš 136 h (dva bloky a dvě pauzy).
+#
+# Vzešel ze stejného MILP jako U (marže KGJ proti kotli, blok ≥ 4 h, max.
+# 1 start za kalendářní den) s pravidlem navíc: hodina (měsíc × den v týdnu ×
+# hodina) smí do okna, jen když KGJ v ní vydělává aspoň ve 3 ze 4 dnů měsíce.
+# Okno pak v provozu skoro celé odjede a dispečink se na plán může spolehnout.
+# Šablona je navíc zjednodušená:
+#   · XI–II mají jednu společnou šablonu — ladění po měsících nic nepřineslo,
+#   · III–VIII jedou každý den stejné večerní okno — šablona po dnech v týdnu
+#     by přinesla jen ~3 tis. €/rok,
+#   · září je bez provozu: poptávka 0,338 MW by znamenala mařit 44 % tepla
+#     KGJ (~44 MWh/rok) kvůli 5,4 tis. € marže.
+# Pravidla platí na kalendáři 2027 včetně přechodů mezi měsíci; v jiném roce
+# připadnou hranice měsíců na jiné dny v týdnu a je třeba je ověřit znovu.
+V_WINTER_BLOCKS = (('Ne 15', 'St 21'), ('Čt 13', 'So 23'))
+V_WEEK_BLOCKS = {
+    1: V_WINTER_BLOCKS,
+    2: V_WINTER_BLOCKS,
+    3: daily_blocks(17, 0),
+    4: daily_blocks(18, 2),
+    5: daily_blocks(19, 1),
+    6: daily_blocks(18, 2),
+    7: daily_blocks(18, 2),
+    8: daily_blocks(18, 2),
+    9: (),                                              # bez provozu
+    10: (('Po 06', 'Čt 23'), ('Pá 15', 'Pá 23'), ('So 16', 'So 21')),
+    11: V_WINTER_BLOCKS,
+    12: V_WINTER_BLOCKS,
+}
+
+# Profily daného týdenní šablonou po měsících.
+WEEK_TEMPLATE_PROFILES = {
+    'u': U_WEEK_BLOCKS,
+    'v': V_WEEK_BLOCKS,
+}
 
 # PROM26 — pásmo dodané jako hodinová maska 0/1 na rok 2026. Maska se beze
 # zbytku rozkládá na okna po měsících plus pět výjimečných dní, takže ji
@@ -324,6 +369,11 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
       U       – týdenní šablona po měsících (bloky přes více dní), běh
                 ≤ 96 h, pauza ≥ 8 h, blok ≥ 4 h, max. 1 start denně;
                 šablony viz U_WEEK_BLOCKS
+      V       – plán pro dispečink: běh ≤ 96 h, pauza ≥ 16 h, jen hodiny
+                ziskové aspoň ve 3 ze 4 dnů; XI–II Ne 15 → St 21 +
+                Čt 13 → So 23 | III denně 17–24 | IV,VI–VIII denně 18–02 |
+                V denně 19–01 | IX bez provozu |
+                X Po 06 → Čt 23 + Pá 15–23 + So 16–21
       OFFPEAK – doplněk peaku v rámci 24/7: víkendy a svátky celý den
                 + po–pá hodiny 0..7 a 20..23
       SPECIAL – měsíční vzor s denním rytmem (CZ svátky se neuplatňují):

@@ -127,13 +127,14 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 | `s` | pevné pásmo nad FWD 2027 (3453 h), blok max. 16 h (níže) |
 | `t` | totéž bez stropu délky bloku (3435 h, níže) |
 | `u` | týdenní šablona po měsících, bloky přes více dní (7032 h, níže) |
+| `v` | plán pro dispečink: blok max. 96 h, pauza min. 16 h, září stojí (4136 h, níže) |
 | `offpeak` | doplněk peaku: víkendy a svátky celý den + Po–Pá 20:00–08:00 |
 | `special` | měsíční vzor s denním rytmem |
 | `custom` | ručně vybrané hodiny |
 
 `peak`, `extpeak`, `extpsum` a `offpeak` respektují víkendy i české státní svátky.
 `season`, `seasonplus`, `p`, `s` a `t` jedou 7 dní v týdnu — okno určuje jen
-měsíc a hodina. `u` má pro každý měsíc týdenní šablonu.
+měsíc a hodina. `u` a `v` mají pro každý měsíc týdenní šablonu.
 
 ### EXTPSUM
 
@@ -315,6 +316,58 @@ se tedy nedá srovnávat cenou za MWh — `u` jede dvojnásobek hodin s polovič
 Pravidla 96/8/4 a 1 start denně jsou ověřená na kalendáři 2027 včetně
 přechodů mezi měsíci a změny času. V jiném roce připadnou hranice měsíců na
 jiné dny v týdnu a na přechodu mezi měsíci mohou být porušená.
+
+### V
+
+Plán pro dispečink nad FWD křivkou 2027 (29. 9. 2026): KGJ jede nejvýš
+**96 h v kuse, pak aspoň 16 h stojí**. Cílem je plán, který se v každém
+měsíci opakuje a v provozu se skoro nemění.
+
+Denně opakovaný blok tak má nejvýš 8 h (24 − 16) — noční běh od večerní do
+ranní špičky jako u `u` nejde. V zimě se do týdne vejdou dva bloky a dvě
+pauzy, tedy nejvýš 136 h.
+
+Šablony hledal stejný MILP jako u `u` (marže KGJ proti kotli, blok aspoň 4 h,
+nejvýš 1 start za kalendářní den) s jedním pravidlem navíc: hodina (měsíc ×
+den v týdnu × hodina) smí do okna, jen když KGJ v ní vydělává **aspoň ve 3 ze
+4 dnů** měsíce. Bez něj by šablona držela i hodiny, které vycházejí jen
+v průměru. V konkrétní dny s propadem ceny by pak model uvnitř okna zastavil
+a plán by se v provozu rozpadal.
+
+| Měsíc | Týdenní šablona |
+|---|---|
+| XI, XII, I, II | Ne 15 → St 21 · Čt 13 → So 23 |
+| III | denně 17:00–24:00 |
+| IV, VI, VII, VIII | denně 18:00–02:00 |
+| V | denně 19:00–01:00 |
+| IX | bez provozu |
+| X | Po 06 → Čt 23 · Pá 15:00–23:00 · So 16:00–21:00 |
+
+V zimě jedou dva bloky týdně (78 h a 58 h) s pauzami ze středy na čtvrtek
+a ze soboty na neděli. Jedna šablona pro XI–II vychází stejně jako šablony
+laděné po měsících. Od března do srpna jede KGJ každý den stejné večerní okno
+a solární poledne vynechá; šablona po dnech v týdnu by přinesla jen
+~3 tis. €/rok.
+
+**Září je bez provozu.** Poptávka po teple je tam celý měsíc 0,338 MW, KGJ
+by mařila 44 % svého tepla (~44 MWh za rok) kvůli 5,4 tis. € marže.
+
+Za rok 2027 to je **4136 h**, průměrná FWD 168,9 €/MWh a **234 startů**.
+Roční běh na dodaných datech 2027 (KGJ + kotel, start 30 €, min. doba běhu
+4 h):
+
+| Profil | Zisk | Plán | Odjeto | Neodjeto z plánu | Zastavení v okně |
+|---|---|---|---|---|---|
+| **V** | 636 336 € | 4136 h | 4101 h | **35 h (0,8 %)** | **4** |
+| U | 702 087 € | 7032 h | 6722 h | 310 h (4,4 %) | 48 |
+
+`v` vydělá méně než `u`, protože jede méně hodin, ale plán skoro celý odjede.
+Tři ze čtyř zastavení jsou dřívější konec okna s následnou pauzou 18–19 h;
+jen 28. 10. by model v okně zastavil na 6 h.
+
+Pravidla 96/16/4 a 1 start denně jsou ověřená na kalendáři 2027 včetně
+přechodů mezi měsíci a změny času. V jiném roce připadnou hranice měsíců na
+jiné dny v týdnu a je třeba je ověřit znovu.
 
 ## Změna času v provozním plánu
 
