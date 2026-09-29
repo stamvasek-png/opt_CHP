@@ -144,13 +144,18 @@ KGJ buď ve **všech** hodinách okna profilu, nebo v žádné. Pojede tak i tý
 který je sám o sobě ztrátový, pokud se vyplatí měsíc jako celek — provoz je
 po celý měsíc stejný.
 
-Které měsíce, rozhoduje solver. S ročním limitem hodin tak například PEAK do
-3300 h pustí peak do nejvýnosnějších celých měsíců, které se do limitu vejdou.
-Bez limitu pustí všechny měsíce, které jako celek vydělávají.
+Které měsíce, rozhoduje solver, a to ve dvou krocích. Nejdřív vybere
+nejvýnosnější celé měsíce, které se vejdou do ročního limitu hodin — například
+EXTPEAK do 3300 h. Co z limitu zbyde, smí pak dát do **jednoho** dalšího
+měsíce z těch, které nevybral. Ten je neúplný a hodiny v něm se vybírají
+volně v okně profilu (s min. dobou běhu a limitem startů jako obvykle).
+Měsíc, který se vyplatí celý a do limitu se vejde, tak zůstane vždy celý.
+Bez limitu hodin žádný neúplný měsíc nevzniká — jedou všechny měsíce, které
+jako celek vydělávají.
 
 - Výkon si model volí dál (min. zatížení až 100 %), stejně jako u BASE.
-- Min. doba běhu a limit startů za měsíc se neuplatní — hodiny určuje profil
-  (PROM26 s 3h bloky tak jede i při min. době běhu 4 h).
+- V celých měsících se min. doba běhu a limit startů za měsíc neuplatní —
+  hodiny určuje profil (PROM26 s 3h bloky tak jede i při min. době běhu 4 h).
 - BASE se nemění, FREE znamená celé měsíce 24/7.
 - Platí pro porovnání profilů, měsíční analýzu, roční plán i citlivostní analýzu.
 - Výstupy a exporty zůstávají stejné; které měsíce solver zvolil, je vidět

@@ -920,10 +920,12 @@ with st.sidebar:
         help="V každém měsíci jede KGJ buď ve všech hodinách profilu, nebo "
              "v žádné — i když je některý týden ztrátový, rozhoduje měsíc jako "
              "celek. Které měsíce, vybere solver: s limitem hodin např. PEAK "
-             "do 3300 h pustí profil do nejvýnosnějších celých měsíců. Výkon si "
-             "model volí dál (min. zatížení až 100 %). Min. doba běhu a limit "
-             "startů se v tomto režimu neuplatní — hodiny určuje profil. "
-             "BASE se nemění, FREE = celé měsíce 24/7.")
+             "do 3300 h pustí profil do nejvýnosnějších celých měsíců. Co celé "
+             "měsíce z limitu nevyčerpají, smí jít do jednoho dalšího měsíce, "
+             "který pak bude neúplný. Výkon si model volí dál (min. zatížení "
+             "až 100 %). V celých měsících se min. doba běhu a limit startů "
+             "neuplatní — hodiny určuje profil. BASE se nemění, FREE = celé "
+             "měsíce 24/7.")
 
     # Provozní Omezení
     st.subheader("3️⃣ Omezení Provozování")
@@ -1562,11 +1564,12 @@ if st.session_state.fwd_data is not None and loc_file is not None:
                     f"{min(hi - lo for bl in _short.values() for lo, hi in bl)} h.")
 
     if use_kgj and whole_months:
-        _skip = ("Min. doba běhu ani limit startů za měsíc se neuplatní"
-                 if use_month_start_limit else "Min. doba běhu se neuplatní")
+        _skip = ("min. doba běhu ani limit startů za měsíc se neuplatní"
+                 if use_month_start_limit else "min. doba běhu se neuplatní")
         st.info(f"🗓️ Profily po celých měsících: v každém měsíci jede KGJ buď ve "
                 f"všech hodinách profilu, nebo v žádné; měsíce vybere solver. "
-                f"{_skip} — hodiny určuje profil.")
+                f"Zbytek limitu hodin smí jít do jednoho neúplného měsíce. "
+                f"V celých měsících {_skip} — hodiny určuje profil.")
 
     n_months = pd.to_datetime(df['datetime']).dt.month.nunique()
     run_monthly = st.checkbox(

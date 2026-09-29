@@ -612,6 +612,7 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
     # hodinách okna profilu, nebo v žádné. BASE jede vždy všechny, nic se nemění.
     whole_months = (bool(p.get('kgj_whole_months')) and bool(u['kgj'])
                     and profile_type != 'base')
+    month_full, month_part, month_of = {}, {}, [None] * T
 
     # ── Rampy nájezdu / sjezdu KGJ ───────────────
     # Lineární rampa délky τ minut ⇒ hodina startu dodá průměrně P·(1 − τ/120),
@@ -750,20 +751,31 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
             elif profile_constraints[t] == 1:
                 model += on[t] == 1, f"profile_on_{t}"
 
-        # Celé měsíce: jedna binárka na kalendářní měsíc drží pohromadě všechny
+        # Celé měsíce: binárka na kalendářní měsíc drží pohromadě všechny
         # hodiny okna profilu v měsíci — pojede i ztrátový týden, pokud se
         # vyplatí měsíc jako celek. Výkon si model volí dál (min. zatížení až
-        # 100 %) a roční limit hodin pak vybírá nejlepší celé měsíce.
+        # 100 %) a roční limit hodin pak vybírá nejlepší celé měsíce. Co z
+        # limitu celé měsíce nevyčerpají, smí jít do jednoho z nevybraných
+        # měsíců (druhý krok u solve) — ten je neúplný a hodiny v něm se
+        # vybírají volně v okně profilu.
         if whole_months:
             periods = pd.to_datetime(df['datetime']).dt.to_period('M')
-            month_on = {}
+            leftover = bool(p.get('kgj_hour_limit_on') and p.get('kgj_hour_limit'))
             for t in range(T):
-                if profile_constraints[t] == 0:
-                    per = periods.iloc[t]
-                    if per not in month_on:
-                        month_on[per] = pulp.LpVariable(
-                            f"month_on_{per.year}_{per.month:02d}", cat='Binary')
-                    model += on[t] == month_on[per], f"whole_month_{t}"
+                if profile_constraints[t] != 0:
+                    continue
+                per = month_of[t] = periods.iloc[t]
+                if per not in month_full:
+                    tag = f"{per.year}_{per.month:02d}"
+                    month_full[per] = pulp.LpVariable(f"month_full_{tag}", cat='Binary')
+                    if leftover:
+                        month_part[per] = pulp.LpVariable(f"month_part_{tag}", cat='Binary')
+                        month_part[per].upBound = 0      # 1. krok: jen celé měsíce
+                        model += month_full[per] + month_part[per] <= 1, f"month_kind_{tag}"
+                model += on[t] >= month_full[per], f"whole_month_on_{t}"
+                model += on[t] <= month_full[per] + month_part.get(per, 0), f"whole_month_off_{t}"
+            if month_part:
+                model += pulp.lpSum(month_part.values()) <= 1, "one_partial_month"
 
         model += start[0] == on[0]
         for t in range(1, T):
@@ -792,27 +804,30 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
                     model += rd[t] >= q_kgj[t - 1] - M * (1 - stop[t]), f"rd_lb_{t}"
                     model += rd[t] >= q_lo * stop[t],              f"rd_cut_{t}"
 
-        # Po celých měsících určuje bloky natvrdo profil — min. doba běhu by jen
-        # vyřadila celý měsíc s kratším blokem (PROM26 má 3h bloky).
-        min_rt = 1 if whole_months else int(p['k_min_runtime'])
+        # V celém měsíci určuje bloky natvrdo profil — min. doba běhu by jen
+        # vyřadila měsíc s kratším blokem (PROM26 má 3h bloky). V neúplném
+        # měsíci se hodiny vybírají volně, tam platí jako jindy.
+        min_rt = int(p['k_min_runtime'])
         for t in range(T):
+            full = month_full[month_of[t]] if month_of[t] is not None else 0
             for dt in range(1, min_rt):
                 if t + dt < T:
-                    model += on[t+dt] >= start[t]
+                    model += on[t+dt] >= start[t] - full
         
         # Roční limit hodin — pro BASE profil se ignoruje (KGJ jede vždy)
         if (p.get('kgj_hour_limit_on') and p.get('kgj_hour_limit')
                 and profile_type != 'base'):
             model += pulp.lpSum(on[t] for t in range(T)) <= p['kgj_hour_limit']
         
-        # NOVÉ: Limit startů za měsíc — po celých měsících dává starty profil
-        if max_starts_per_month is not None and u['kgj'] and not whole_months:
+        # NOVÉ: Limit startů za měsíc — v celém měsíci dává starty profil
+        if max_starts_per_month is not None and u['kgj']:
             df_month = df.copy()
             df_month['month'] = pd.to_datetime(df_month['datetime']).dt.to_period('M')
             for month in df_month['month'].unique():
                 month_indices = df_month[df_month['month'] == month].index.tolist()
                 if len(month_indices) > 0:
-                    model += pulp.lpSum(start[t] for t in month_indices) <= max_starts_per_month, f"starts_limit_{month}"
+                    free = len(month_indices) * month_full.get(month, 0)
+                    model += pulp.lpSum(start[t] for t in month_indices) <= max_starts_per_month + free, f"starts_limit_{month}"
 
     # ── Kotel – on/off + roční limit ─────────────
     if u['boil']:
@@ -963,9 +978,22 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
     # optimalitu, coz je u rocni ulohy s akumulaci exponencialne drahe -
     # najit dobre reseni je rychle, dokazat ze lepsi neexistuje uz ne.
     # 1 % je hluboko pod nejistotou FWD krivky, ze ktere se pocita.
-    status = model.solve(pulp.PULP_CBC_CMD(
-        msg=0, timeLimit=time_limit,
-        gapRel=gap_rel if gap_rel else None))
+    def cbc(warm=False):
+        return pulp.PULP_CBC_CMD(msg=0, timeLimit=time_limit,
+                                 gapRel=gap_rel if gap_rel else None,
+                                 warmStart=warm)
+
+    status = model.solve(cbc())
+    # Po celých měsících ve dvou krocích: první řešení vybralo nejlepší celé
+    # měsíce do limitu hodin. Ty se teď zafixují a zbytek limitu smí jít do
+    # jednoho z nevybraných měsíců, který tím bude neúplný. Měsíc, který se
+    # vyplatí celý a do limitu se vejde, tak zůstane celý.
+    if month_part and status in (1, 2):
+        for per, full in month_full.items():
+            val = int(round(full.value() or 0))
+            full.lowBound = full.upBound = val
+            month_part[per].upBound = 1 - val
+        status = model.solve(cbc(warm=True))
     if status not in (1, 2):
         return None
 

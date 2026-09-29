@@ -3,7 +3,8 @@
 Parametr `kgj_whole_months` (checkbox v UI): měsíce vybírá solver sám, jedna
 binárka na kalendářní měsíc. S limitem hodin tak třeba PEAK do 3300 h jede
 v nejvýnosnějších celých měsících, místo aby sbíral jednotlivé hodiny a dělal
-různě dlouhá okna.
+různě dlouhá okna. Co celé měsíce z limitu nevyčerpají, smí jít do jednoho
+dalšího měsíce — ten je neúplný a hodiny v něm se vybírají volně.
 
 Bez tepla (poptávka 0) vydělává KGJ jen na elektřině: marže je zhruba
 0,725 × cena − 55 €/h, bod zvratu ~76 €/MWh.
@@ -43,10 +44,29 @@ def per_month(df, mask):
     return pd.Series(mask).groupby(df['datetime'].dt.month.values).sum().to_dict()
 
 
+def runs(mask):
+    """Délky souvislých bloků provozu."""
+    out, cur = [], 0
+    for v in mask:
+        if v:
+            cur += 1
+        elif cur:
+            out.append(cur)
+            cur = 0
+    return out + ([cur] if cur else [])
+
+
 def february(prices):
     """2.–15. 2. 2026 (od pondělí), 60 h peaku v každém týdnu."""
     return make_df(hours=24 * 14, ee_price=prices, heat_demand=0.0,
                    start='2026-02-02 00:00')
+
+
+def january_february(price_of):
+    """26. 1.–8. 2. 2026: 60 h peaku v lednu (26.–30.) i v únoru (2.–6.)."""
+    idx = pd.date_range('2026-01-26', periods=24 * 14, freq='h')
+    return make_df(hours=len(idx), ee_price=[price_of(t) for t in idx],
+                   heat_demand=0.0, start='2026-01-26 00:00')
 
 
 # ── model ───────────────────────────────────────────────────────────
@@ -66,11 +86,8 @@ def test_hour_limit_picks_the_best_whole_month():
     Leden má 36 h peaku za 300 a 24 h za 100 €/MWh, únor 60 h za 240 €/MWh.
     Nejlepší hodiny jsou lednové, ale jako celek vydělá víc únor.
     """
-    idx = pd.date_range('2026-01-26', periods=24 * 14, freq='h')
-    price = np.where(idx < '2026-01-29', 300.0,
-                     np.where(idx < '2026-02-01', 100.0, 240.0))
-    df = make_df(hours=len(idx), ee_price=list(price), heat_demand=0.0,
-                 start='2026-01-26 00:00')
+    df = january_february(lambda t: 300.0 if t.day in (26, 27, 28)
+                          else 100.0 if t.month == 1 else 240.0)
     win = window(df, 'peak')
     assert per_month(df, win) == {1: 60, 2: 60}
 
@@ -79,6 +96,60 @@ def test_hour_limit_picks_the_best_whole_month():
     on = solve(df, 'peak', whole=True, **limit)
     assert per_month(df, on) == {1: 0, 2: 60}
     assert (on == (win & (df['datetime'].dt.month == 2).values)).all()
+
+
+def test_leftover_hours_go_into_one_more_month():
+    """Limit 90 h: celý únor (60 h) a zbylých 30 h do ledna, ten je neúplný."""
+    df = january_february(lambda t: 300.0 if t.day in (26, 27, 28)
+                          else 100.0 if t.month == 1 else 240.0)
+    on = solve(df, 'peak', whole=True, kgj_hour_limit_on=True, kgj_hour_limit=90)
+    assert per_month(df, on) == {1: 30, 2: 60}
+    feb = (df['datetime'].dt.month == 2).values
+    assert (on[feb] == window(df, 'peak')[feb]).all()
+    assert (df['datetime'][on & ~feb].dt.day <= 28).all()      # nejdrazsi dny
+
+
+def test_month_that_fits_stays_whole():
+    """Limit 200 h pojme oba měsíce: leden jede celý i se ztrátovými dny.
+
+    Neúplný měsíc je jen pro zbytek limitu v nevybraném měsíci — solver z něj
+    nesmí udělat neúplný měsíc, aby vybral jen lednové drahé dny.
+    """
+    df = january_february(lambda t: 200.0 if t.day in (26, 27, 28)
+                          else 60.0 if t.month == 1 else 240.0)
+    on = solve(df, 'peak', whole=True, kgj_hour_limit_on=True, kgj_hour_limit=200)
+    assert (on == window(df, 'peak')).all()
+
+
+def test_leftover_goes_into_a_single_month():
+    """Limit 40 h je menší než celý měsíc: zbytek smí jít jen do jednoho.
+
+    Bez režimu vezme solver nejlepší hodiny z obou měsíců. V režimu jen únor,
+    jehož nejlepších 40 h vydělá víc než nejlepších 40 h ledna.
+    """
+    df = january_february(lambda t: {26: 300.0, 27: 300.0}.get(t.day, 100.0)
+                          if t.month == 1
+                          else 250.0 if t.day in (2, 3, 4) else 100.0)
+    limit = dict(kgj_hour_limit_on=True, kgj_hour_limit=40)
+    assert per_month(df, solve(df, 'peak', whole=False, **limit)) == {1: 24, 2: 16}
+    assert per_month(df, solve(df, 'peak', whole=True, **limit)) == {1: 0, 2: 40}
+
+
+def test_min_runtime_holds_in_the_partial_month():
+    """V neúplném lednu se hodiny vybírají volně — ale s min. dobou běhu.
+
+    Lednový peak střídá drahé (liché) a ztrátové (sudé) hodiny. S min. dobou
+    běhu 1 h vezme solver 6 osamocených drahých hodin, se 4 h jen bloky ≥ 4 h.
+    """
+    df = january_february(lambda t: (300.0 if t.hour % 2 else 40.0)
+                          if t.month == 1 else 240.0)
+    jan = (df['datetime'].dt.month == 1).values
+    limit = dict(kgj_hour_limit_on=True, kgj_hour_limit=66)
+    loose = solve(df, 'peak', whole=True, k_min_runtime=1, **limit)
+    assert runs(loose[jan]) == [1] * 6
+    strict = solve(df, 'peak', whole=True, k_min_runtime=4, **limit)
+    assert strict[jan].sum() > 0 and min(runs(strict[jan])) >= 4
+    assert strict[~jan].sum() == 60                            # unor cely
 
 
 def test_short_profile_block_runs_despite_min_runtime():
