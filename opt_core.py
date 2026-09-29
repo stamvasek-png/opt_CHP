@@ -274,6 +274,25 @@ WEEK_TEMPLATE_PROFILES = {
     'v': V_WEEK_BLOCKS,
 }
 
+# Profil W — zadaný tabulkou po měsících: pracovní dny a soboty mají vlastní
+# okno, neděle a státní svátky stojí. Svátek se chová jako neděle i tehdy,
+# když připadne na sobotu.
+W_WINDOWS = {                                   # měsíc → (Po–Pá, sobota)
+    1: ((6, 24), (7, 22)),   2: ((6, 24), (7, 22)),
+    3: ((16, 22), (16, 22)),
+    4: ((17, 23), (17, 23)),
+    5: ((18, 24), (18, 24)), 6: ((18, 24), (18, 24)),
+    7: ((18, 24), (18, 24)), 8: ((18, 24), (18, 24)),
+    9: ((18, 24), (18, 24)),
+    10: ((17, 23), (17, 23)),
+    11: ((6, 24), (7, 22)),  12: ((6, 24), (7, 22)),
+}
+
+# Profily s oknem po měsících zvlášť pro pracovní den a sobotu.
+DAYTYPE_WINDOW_PROFILES = {
+    'w': W_WINDOWS,
+}
+
 # PROM26 — pásmo dodané jako hodinová maska 0/1 na rok 2026. Maska se beze
 # zbytku rozkládá na okna po měsících plus pět výjimečných dní, takže ji
 # držíme v téhle podobě: dá se přečíst a zkontrolovat, na rozdíl od 8760
@@ -320,6 +339,9 @@ def profile_blocks(profile_type):
                 for m, w in MONTH_WINDOW_PROFILES[profile_type].items()}
     if profile_type == 'prom26':
         return dict(PROM26_WINDOWS)
+    if profile_type in DAYTYPE_WINDOW_PROFILES:
+        return {m: tuple(dict.fromkeys(w for w in pair if w[1] > w[0]))
+                for m, pair in DAYTYPE_WINDOW_PROFILES[profile_type].items()}
     return None
 
 
@@ -374,6 +396,9 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
                 Čt 13 → So 23 | III denně 17–24 | IV,VI–VIII denně 18–02 |
                 V denně 19–01 | IX bez provozu |
                 X Po 06 → Čt 23 + Pá 15–23 + So 16–21
+      W       – pracovní dny a soboty s oknem po měsících, neděle a CZ
+                svátky stojí: I,II,XI,XII Po–Pá 06–24, So 07–22 | III 16–22 |
+                IV,X 17–23 | V–IX 18–24 (III–X So stejně jako Po–Pá)
       OFFPEAK – doplněk peaku v rámci 24/7: víkendy a svátky celý den
                 + po–pá hodiny 0..7 a 20..23
       SPECIAL – měsíční vzor s denním rytmem (CZ svátky se neuplatňují):
@@ -434,6 +459,24 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
         weekdays = dt.dt.weekday.values
         constraints = [0 if int(wd) * 24 + int(h) in tmpl[int(m)] else -1
                        for h, m, wd in zip(hours, months, weekdays)]
+
+    elif profile_type in DAYTYPE_WINDOW_PROFILES:
+        # Pracovní den a sobota mají okno podle měsíce, neděle a svátky stojí
+        # (svátek i tehdy, když připadne na sobotu).
+        windows = DAYTYPE_WINDOW_PROFILES[profile_type]
+        months = dt.dt.month.values
+        weekdays = dt.dt.weekday.values
+        constraints = []
+        for h, m, wd, bd, day in zip(hours, months, weekdays, bdays,
+                                     dt.dt.date.values):
+            workday, saturday = windows[int(m)]
+            if bd:
+                lo, hi = workday
+            elif wd == 5 and day not in CZ_HOLIDAYS:
+                lo, hi = saturday
+            else:
+                lo, hi = 0, 0
+            constraints.append(0 if lo <= h < hi else -1)
 
     elif profile_type == 'offpeak':
         constraints = [0 if ((not bd) or h < 8 or h >= 20) else -1
