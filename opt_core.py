@@ -127,7 +127,8 @@ P_WINDOWS = {
 # k nejdražším hodinám roku (19 h průměrně 291 €/MWh).
 #
 # S má strop 16 h na blok (180,1 €/MWh, 3453 h v roce 2027).
-# T strop nemá (182,1 €/MWh, 3435 h) — zimní bloky jsou 19–22 h dlouhé.
+# T strop nemá (182,9 €/MWh, 3351 h) — v lednu a únoru jede 19 h denně.
+# Únor měl z výběru 02–24; na přání má stejné okno jako leden.
 S_WINDOWS = {
     1: (6, 22),  2: (6, 22),                              # 16 h
     3: (16, 24),                                          # 8 h
@@ -139,8 +140,7 @@ S_WINDOWS = {
     12: (7, 23),                                          # 16 h
 }
 T_WINDOWS = {
-    1: (5, 24),                                           # 19 h
-    2: (2, 24),                                           # 22 h
+    1: (5, 24),  2: (5, 24),                              # 19 h
     3: (17, 23),                                          # 6 h
     4: (18, 23),                                          # 5 h
     5: (19, 23),                                          # 4 h
@@ -363,7 +363,7 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
       S, T    – pevné pásmo nad FWD 2027, 7 dní v týdnu, září 18–23:
                 S (blok ≤ 16 h) I,II,XI 06–22 | III 16–24 | IV–VIII 18–24 |
                               IX 18–23 | X 15–22 | XII 07–23
-                T (bez stropu)  I 05–24 | II 02–24 | III 17–23 | IV 18–23 |
+                T (bez stropu)  I,II 05–24 | III 17–23 | IV 18–23 |
                               V 19–23 | VI,VII 18–24 | VIII 18–23 |
                               IX 18–23 | X 16–21 | XI 06–23 | XII 07–21
       U       – týdenní šablona po měsících (bloky přes více dní), běh
