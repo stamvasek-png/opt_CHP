@@ -978,22 +978,24 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
     # optimalitu, coz je u rocni ulohy s akumulaci exponencialne drahe -
     # najit dobre reseni je rychle, dokazat ze lepsi neexistuje uz ne.
     # 1 % je hluboko pod nejistotou FWD krivky, ze ktere se pocita.
-    def cbc(warm=False):
+    def cbc():
         return pulp.PULP_CBC_CMD(msg=0, timeLimit=time_limit,
-                                 gapRel=gap_rel if gap_rel else None,
-                                 warmStart=warm)
+                                 gapRel=gap_rel if gap_rel else None)
 
     status = model.solve(cbc())
     # Po celých měsících ve dvou krocích: první řešení vybralo nejlepší celé
     # měsíce do limitu hodin. Ty se teď zafixují a zbytek limitu smí jít do
     # jednoho z nevybraných měsíců, který tím bude neúplný. Měsíc, který se
     # vyplatí celý a do limitu se vejde, tak zůstane celý.
+    # Bez warm startu: CBC na Windows ho bez keepFiles=True nedostane (PuLP to
+    # u každého běhu hlásí varováním) a s pevnými celými měsíci je druhý krok
+    # rychlý i tak.
     if month_part and status in (1, 2):
         for per, full in month_full.items():
             val = int(round(full.value() or 0))
             full.lowBound = full.upBound = val
             month_part[per].upBound = 1 - val
-        status = model.solve(cbc(warm=True))
+        status = model.solve(cbc())
     if status not in (1, 2):
         return None
 

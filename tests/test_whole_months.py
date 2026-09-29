@@ -135,6 +135,28 @@ def test_leftover_goes_into_a_single_month():
     assert per_month(df, solve(df, 'peak', whole=True, **limit)) == {1: 0, 2: 40}
 
 
+def test_second_step_runs_without_warm_start(monkeypatch):
+    """Druhý krok (neúplný měsíc) nesmí chtít warm start.
+
+    PuLP ho na Windows bez keepFiles=True nepředá a u každého běhu vypíše
+    UserWarning; keepFiles by zase nechávalo soubory ve složce aplikace.
+    """
+    calls = []
+    orig = opt_core.pulp.PULP_CBC_CMD
+
+    def recording(**kw):
+        calls.append(kw)
+        return orig(**kw)
+
+    monkeypatch.setattr(opt_core.pulp, 'PULP_CBC_CMD', recording)
+    df = january_february(lambda t: 300.0 if t.day in (26, 27, 28)
+                          else 100.0 if t.month == 1 else 240.0)
+    on = solve(df, 'peak', whole=True, kgj_hour_limit_on=True, kgj_hour_limit=90)
+    assert per_month(df, on) == {1: 30, 2: 60}
+    assert len(calls) == 2
+    assert not any(kw.get('warmStart') for kw in calls)
+
+
 def test_min_runtime_holds_in_the_partial_month():
     """V neúplném lednu se hodiny vybírají volně — ale s min. dobou běhu.
 
