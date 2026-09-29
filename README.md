@@ -124,12 +124,15 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 | `seasonplus` | `season` s okny širšími o 1–2 h na každém konci |
 | `p` | pásmo z nejlepších FWD hodin ceny EE (níže) |
 | `prom26` | dodaná hodinová maska na rok 2026 (níže) |
+| `s` | pevné pásmo nad FWD 2027 (3453 h), blok max. 16 h (níže) |
+| `t` | totéž bez stropu délky bloku (3435 h, níže) |
 | `offpeak` | doplněk peaku: víkendy a svátky celý den + Po–Pá 20:00–08:00 |
 | `special` | měsíční vzor s denním rytmem |
 | `custom` | ručně vybrané hodiny |
 
 `peak`, `extpeak`, `extpsum` a `offpeak` respektují víkendy i české státní svátky.
-`season` a `seasonplus` jedou 7 dní v týdnu — okno určuje jen měsíc a hodina.
+`season`, `seasonplus`, `p`, `s` a `t` jedou 7 dní v týdnu — okno určuje jen
+měsíc a hodina.
 
 ### EXTPSUM
 
@@ -227,6 +230,44 @@ kratšího, než je minimální doba běhu, KGJ nenastartuje vůbec — ani při
 sebevyšší ceně. S výchozími 4 h tak zůstane nevyužito 642 hodin masky a
 květen až srpen je celý bez provozu. Pro PROM26 nastav **min. dobu běhu 3 h**;
 aplikace na krátké bloky upozorní před spuštěním.
+
+### S a T
+
+Pevné pásmo nad FWD křivkou 2027 (29. 9. 2026): jeden souvislý
+blok denně, 7 dní v týdnu, v každém měsíci stejné okno. Metoda je stejná jako
+u P — všechna souvislá okna po měsících a přes měsíce batoh s pevnou velikostí
+pásma (~3300 h), tedy maximalizace jeho průměrné FWD ceny. Hodina smí do okna,
+jen když poptávka po teple stačí na plný výkon KGJ každý den v měsíci — s
+výjimkou září, které bylo doplněno dodatečně (níže).
+
+| Měsíc | `s` (blok ≤ 16 h) | `t` (bez stropu) |
+|---|---|---|
+| I | 06:00–22:00 | 05:00–24:00 |
+| II | 06:00–22:00 | 02:00–24:00 |
+| III | 16:00–24:00 | 17:00–23:00 |
+| IV | 18:00–24:00 | 18:00–23:00 |
+| V | 18:00–24:00 | 19:00–23:00 |
+| VI, VII | 18:00–24:00 | 18:00–24:00 |
+| VIII | 18:00–24:00 | 18:00–23:00 |
+| IX | 18:00–23:00 | 18:00–23:00 |
+| X | 15:00–22:00 | 16:00–21:00 |
+| XI | 06:00–22:00 | 06:00–23:00 |
+| XII | 07:00–23:00 | 07:00–21:00 |
+| **rok 2027** | **3453 h**, FWD 180,1 €/MWh | **3435 h**, FWD 182,1 €/MWh |
+
+**Září 18–23** je doplněné nad rámec výběru: poptávka po teple je tam celý
+měsíc 0,338 MW, na plný výkon KGJ (0,605 MW tepla) tedy nestačí, ale KGJ se
+vejde na minimální zatížení 50 % (0,3025 MW). Za to přidá 150 h s průměrnou
+FWD 198,4 €/MWh — zářijové večery patří k nejdražším hodinám roku.
+
+Letní okna začínají v 18:00 (resp. 19:00), takže solární propad kolem poledne
+i jeho záporné ceny zůstávají mimo pásmo.
+
+Rozdíl mezi nimi je jen v délce zimního bloku. `s` nikde nejede přes 16 h.
+`t` je o 2,1 €/MWh dražší, ale v lednu a únoru běží 19–22 h denně.
+Pro srovnání: bez září by volný výběr 3300 nejdražších hodin měl 191,4 €/MWh
+proti 179,3 (`s`) a 181,4 €/MWh (`t`) — rozdíl je cena za to, že pásmo je
+uvnitř měsíce konzistentní.
 
 ## Změna času v provozním plánu
 

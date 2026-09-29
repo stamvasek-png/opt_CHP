@@ -114,11 +114,51 @@ P_WINDOWS = {
     10: (6, 22), 11: (6, 22), 12: (6, 22),                # 16 h
 }
 
+# Profily S a T — pevné pásmo nad FWD křivkou 2027 (29. 9. 2026).
+# Stejná metoda jako u P: všechna souvislá okna po měsících, přes měsíce
+# batoh s pevnou velikostí pásma ~3300 h, tedy maximalizace jeho průměrné
+# FWD ceny.
+# Hodina smí do okna, jen když poptávka po teple stačí na plný výkon KGJ
+# každý den v měsíci — proto v říjnu vypadla noc.
+#
+# Výjimkou je září 18–23, doplněné na přání: poptávka je tam celý měsíc
+# 0,338 MW, takže na plný výkon (0,605 MW tepla) nestačí, ale KGJ se
+# vejde na minimální zatížení 50 % (0,3025 MW). Zářijové večery patří
+# k nejdražším hodinám roku (19 h průměrně 291 €/MWh).
+#
+# S má strop 16 h na blok (180,1 €/MWh, 3453 h v roce 2027).
+# T strop nemá (182,1 €/MWh, 3435 h) — zimní bloky jsou 19–22 h dlouhé.
+S_WINDOWS = {
+    1: (6, 22),  2: (6, 22),                              # 16 h
+    3: (16, 24),                                          # 8 h
+    4: (18, 24), 5: (18, 24), 6: (18, 24),
+    7: (18, 24), 8: (18, 24),                             # 6 h
+    9: (18, 23),                                          # 5 h, min. zatížení
+    10: (15, 22),                                         # 7 h
+    11: (6, 22),                                          # 16 h
+    12: (7, 23),                                          # 16 h
+}
+T_WINDOWS = {
+    1: (5, 24),                                           # 19 h
+    2: (2, 24),                                           # 22 h
+    3: (17, 23),                                          # 6 h
+    4: (18, 23),                                          # 5 h
+    5: (19, 23),                                          # 4 h
+    6: (18, 24), 7: (18, 24),                             # 6 h
+    8: (18, 23),                                          # 5 h
+    9: (18, 23),                                          # 5 h, min. zatížení
+    10: (16, 21),                                         # 5 h
+    11: (6, 23),                                          # 17 h
+    12: (7, 21),                                          # 14 h
+}
+
 # Profily, které jsou dané jen dvojicí (měsíc → okno) a jedou 7 dní v týdnu.
 MONTH_WINDOW_PROFILES = {
     'season':     SEASON_WINDOWS,
     'seasonplus': SEASONPLUS_WINDOWS,
     'p':          P_WINDOWS,
+    's':          S_WINDOWS,
+    't':          T_WINDOWS,
 }
 
 # PROM26 — pásmo dodané jako hodinová maska 0/1 na rok 2026. Maska se beze
@@ -159,9 +199,12 @@ def profile_blocks(profile_type):
 
     Slouží ke kontrole, jestli se do bloku vůbec vejde minimální doba běhu.
     U PROM26 se vrací jen okna měsíců; výjimečné dny kontrolu nemění.
+    Prázdné okno (lo, hi) s hi <= lo znamená měsíc bez provozu a nemá žádný
+    blok — jinak by vyšlo jako „blok kratší než min. doba běhu“.
     """
     if profile_type in MONTH_WINDOW_PROFILES:
-        return {m: (w,) for m, w in MONTH_WINDOW_PROFILES[profile_type].items()}
+        return {m: ((w,) if w[1] > w[0] else ())
+                for m, w in MONTH_WINDOW_PROFILES[profile_type].items()}
     if profile_type == 'prom26':
         return dict(PROM26_WINDOWS)
     return None
@@ -204,6 +247,12 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
                 IX 17–23 | X–XII 06–22
       PROM26  – dodaná hodinová maska 2026: okna po měsících (v přechodných
                 měsících ráno + večer) a pět výjimečných dní
+      S, T    – pevné pásmo nad FWD 2027, 7 dní v týdnu, září 18–23:
+                S (blok ≤ 16 h) I,II,XI 06–22 | III 16–24 | IV–VIII 18–24 |
+                              IX 18–23 | X 15–22 | XII 07–23
+                T (bez stropu)  I 05–24 | II 02–24 | III 17–23 | IV 18–23 |
+                              V 19–23 | VI,VII 18–24 | VIII 18–23 |
+                              IX 18–23 | X 16–21 | XI 06–23 | XII 07–21
       OFFPEAK – doplněk peaku v rámci 24/7: víkendy a svátky celý den
                 + po–pá hodiny 0..7 a 20..23
       SPECIAL – měsíční vzor s denním rytmem (CZ svátky se neuplatňují):
