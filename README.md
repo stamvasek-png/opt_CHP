@@ -129,13 +129,14 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 | `u` | týdenní šablona po měsících, bloky přes více dní (7032 h, níže) |
 | `v` | plán pro dispečink: blok max. 96 h, pauza min. 16 h, září stojí (4136 h, níže) |
 | `w` | pracovní dny a soboty s oknem po měsících, neděle a svátky stojí (2946 h, níže) |
+| `x` | z cenové analýzy FWD: nejdražších ~5000 h, blok max. 48 h (5040 h, níže) |
 | `offpeak` | doplněk peaku: víkendy a svátky celý den + Po–Pá 20:00–08:00 |
 | `special` | měsíční vzor s denním rytmem |
 | `custom` | ručně vybrané hodiny |
 
 `peak`, `extpeak`, `extpsum`, `offpeak` a `w` respektují víkendy i české státní svátky.
 `season`, `seasonplus`, `p`, `s` a `t` jedou 7 dní v týdnu — okno určuje jen
-měsíc a hodina. `u` a `v` mají pro každý měsíc týdenní šablonu.
+měsíc a hodina. `u`, `v` a `x` mají pro každý měsíc týdenní šablonu.
 
 ### Profily po celých měsících
 
@@ -413,6 +414,41 @@ připadne na sobotu (v roce 2027 např. 1. 5. a 8. 5.).
 Za rok 2027 to je **2946 h** s průměrnou FWD 184,3 €/MWh. Svátky bere
 z vestavěného kalendáře (2026–2030); pro jiné roky platí jen víkendy
 a aplikace na to upozorní.
+
+### X
+
+Vzor odvozený čistě z cenové analýzy FWD křivky 2027 (29. 9. 2026) — bez
+optimalizace, bez tepla a bez nákladů na starty. Pro každý den se hodiny
+seřadí podle ceny a pro každý měsíc a typ dne (Po–Pá / So / Ne) se spočítá
+průměrný denní profil. Do okna jdou hodiny nad ≈ 128 €/MWh, což je
+nejdražších ~5000 h roku, srovnané do souvislých oken. Žádný blok nepřesáhne
+48 h.
+
+| Měsíc | Po–Pá | Sobota | Neděle | h/měsíc |
+|---|---|---|---|---|
+| I, II | Po 05 → St 01 · St 05 → Pá 01 (44 h) | Pá 05 → Ne 01 (44 h) | Ne 05 → Po 01 | 672 / 608 |
+| XI, XII | 06–23 | 06–23 | 06–23 | 510 / 527 |
+| III | 16 → 10 další den | 17–22 | 18 → Po 10 | 498 |
+| IV, V | 18 → 09 další den | 18(19)–24 | 18(19) → Po 09 | 414 / 410 |
+| IX | 06–10 a 17–23 | 17–23 | 17–23 | 268 |
+| X | 06–23 | 17–21 | 17–21 | 397 |
+| VI, VII, VIII | 18–02 | 18–02 | 18–02 | 240–248 |
+
+- **Leden a únor** jsou nad hranicí celý den i noc — KGJ jede nepřetržitě
+  a pauza 01–05 (nejlevnější hodiny) přijde každou druhou noc.
+- **Listopad a prosinec** mají noci pod hranicí, jede se 06–23.
+- **Březen až květen** mají polední solární propad — okno jde od večerní
+  špičky přes noc do ranní, neděle přes den stojí.
+- **Září** má nad hranicí ranní i večerní špičku, v pracovní dny jsou to
+  dva starty.
+- **Léto** má nad hranicí jen večer.
+
+Za rok 2027 to je **5040 h** s průměrnou FWD 170,0 €/MWh (roční průměr
+135,0 €/MWh; nejdražších 5000 h bez ohledu na tvar 176,2 €/MWh). Vzor
+pokryje 92 % šesti nejdražších hodin každého dne. Zima má 602 h/měsíc,
+jaro a podzim 416 h/měsíc, léto 245 h/měsíc — pořadí platí i měsíc po
+měsíci. Svátky se chovají jako běžný den v týdnu. Teplo vzor nebere v úvahu:
+v září by KGJ část tepla mařila.
 
 ## Změna času v provozním plánu
 
