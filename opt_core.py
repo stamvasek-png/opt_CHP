@@ -608,6 +608,11 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
     # Vytvoř profile constrainty
     profile_constraints = create_profile_constraints(df, profile_type, custom_hours)
 
+    # Profil po celých měsících: v kalendářním měsíci jede KGJ buď ve všech
+    # hodinách okna profilu, nebo v žádné. BASE jede vždy všechny, nic se nemění.
+    whole_months = (bool(p.get('kgj_whole_months')) and bool(u['kgj'])
+                    and profile_type != 'base')
+
     # ── Rampy nájezdu / sjezdu KGJ ───────────────
     # Lineární rampa délky τ minut ⇒ hodina startu dodá průměrně P·(1 − τ/120),
     # hodina po vypnutí ještě P·(τ/120). τ je omezené na 0–60 min, aby se rampa
@@ -744,7 +749,22 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
                 model += on[t] == 0, f"profile_off_{t}"
             elif profile_constraints[t] == 1:
                 model += on[t] == 1, f"profile_on_{t}"
-        
+
+        # Celé měsíce: jedna binárka na kalendářní měsíc drží pohromadě všechny
+        # hodiny okna profilu v měsíci — pojede i ztrátový týden, pokud se
+        # vyplatí měsíc jako celek. Výkon si model volí dál (min. zatížení až
+        # 100 %) a roční limit hodin pak vybírá nejlepší celé měsíce.
+        if whole_months:
+            periods = pd.to_datetime(df['datetime']).dt.to_period('M')
+            month_on = {}
+            for t in range(T):
+                if profile_constraints[t] == 0:
+                    per = periods.iloc[t]
+                    if per not in month_on:
+                        month_on[per] = pulp.LpVariable(
+                            f"month_on_{per.year}_{per.month:02d}", cat='Binary')
+                    model += on[t] == month_on[per], f"whole_month_{t}"
+
         model += start[0] == on[0]
         for t in range(1, T):
             model += start[t] >= on[t] - on[t-1]
@@ -772,7 +792,9 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
                     model += rd[t] >= q_kgj[t - 1] - M * (1 - stop[t]), f"rd_lb_{t}"
                     model += rd[t] >= q_lo * stop[t],              f"rd_cut_{t}"
 
-        min_rt = int(p['k_min_runtime'])
+        # Po celých měsících určuje bloky natvrdo profil — min. doba běhu by jen
+        # vyřadila celý měsíc s kratším blokem (PROM26 má 3h bloky).
+        min_rt = 1 if whole_months else int(p['k_min_runtime'])
         for t in range(T):
             for dt in range(1, min_rt):
                 if t + dt < T:
@@ -783,8 +805,8 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
                 and profile_type != 'base'):
             model += pulp.lpSum(on[t] for t in range(T)) <= p['kgj_hour_limit']
         
-        # NOVÉ: Limit startů za měsíc
-        if max_starts_per_month is not None and u['kgj']:
+        # NOVÉ: Limit startů za měsíc — po celých měsících dává starty profil
+        if max_starts_per_month is not None and u['kgj'] and not whole_months:
             df_month = df.copy()
             df_month['month'] = pd.to_datetime(df_month['datetime']).dt.to_period('M')
             for month in df_month['month'].unique():

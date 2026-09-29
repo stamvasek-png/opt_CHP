@@ -136,6 +136,26 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 `season`, `seasonplus`, `p`, `s` a `t` jedou 7 dní v týdnu — okno určuje jen
 měsíc a hodina. `u` a `v` mají pro každý měsíc týdenní šablonu.
 
+### Profily po celých měsících
+
+Zaškrtávátko **Profily po celých měsících** (postranní panel, pod výběrem
+profilů) mění, jak solver s profilem zachází: v každém kalendářním měsíci jede
+KGJ buď ve **všech** hodinách okna profilu, nebo v žádné. Pojede tak i týden,
+který je sám o sobě ztrátový, pokud se vyplatí měsíc jako celek — provoz je
+po celý měsíc stejný.
+
+Které měsíce, rozhoduje solver. S ročním limitem hodin tak například PEAK do
+3300 h pustí peak do nejvýnosnějších celých měsíců, které se do limitu vejdou.
+Bez limitu pustí všechny měsíce, které jako celek vydělávají.
+
+- Výkon si model volí dál (min. zatížení až 100 %), stejně jako u BASE.
+- Min. doba běhu a limit startů za měsíc se neuplatní — hodiny určuje profil
+  (PROM26 s 3h bloky tak jede i při min. době běhu 4 h).
+- BASE se nemění, FREE znamená celé měsíce 24/7.
+- Platí pro porovnání profilů, měsíční analýzu, roční plán i citlivostní analýzu.
+- Výstupy a exporty zůstávají stejné; které měsíce solver zvolil, je vidět
+  v přehledu hodin provozu jako u ostatních běhů.
+
 ### EXTPSUM
 
 Základ je `extpeak`, tedy Po–Pá 06:00–22:00. **Od 1. 6. do 30. 9. včetně** se
