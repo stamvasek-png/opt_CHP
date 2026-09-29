@@ -161,6 +161,74 @@ MONTH_WINDOW_PROFILES = {
     't':          T_WINDOWS,
 }
 
+# Profil U — týdenní šablona po měsících nad FWD křivkou 2027 (29. 9. 2026).
+# Na rozdíl od profilů výše není vázaný na jedno okno denně: blok smí trvat
+# přes několik dní. Každý týden v měsíci je stejný, víkend se ale smí
+# chovat jinak než pracovní den.
+#
+# Šablony vzešly z MILP (12 × 168 binárních proměnných, omezení na skutečné
+# ose 2027 včetně přechodů mezi měsíci a změny času) bez rozpočtu hodin.
+# Maximalizuje se celková marže KGJ proti kotli: 0,45 MW × FWD + ušetřený
+# plyn kotle za skutečně využitelné teplo − plyn KGJ − servis 14 €/h −
+# start 30 €. Pravidla oken:
+#   · blok nejvýš 96 h, mezi bloky aspoň 8 h pauza (zadání),
+#   · blok aspoň 4 h — do kratšího okna KGJ s výchozí min. dobou běhu 4 h
+#     vůbec nenastartuje,
+#   · nejvýš 1 start za kalendářní den.
+# Pravidla platí na kalendáři 2027; v jiném roce připadnou hranice měsíců
+# na jiné dny v týdnu a na přechodu měsíců mohou být porušená.
+#
+# Blok = (začátek, konec) jako 'Den HH', konec je výlučný. Konec „dřív“ než
+# začátek znamená přechod přes neděli do pondělí.
+U_WEEK_BLOCKS = {
+    1: (('So 07', 'Po 22'), ('Út 06', 'Pá 23')),
+    2: (('So 15', 'Po 22'), ('Út 06', 'Pá 23')),
+    3: (('Ne 16', 'St 09'), ('St 17', 'Ne 07')),
+    4: (('Ne 18', 'St 10'), ('St 18', 'Čt 10'), ('Čt 18', 'Pá 09'),
+        ('Pá 17', 'So 09'), ('So 18', 'Ne 08')),
+    5: (('Ne 18', 'Po 10'), ('Po 18', 'Út 09'), ('Út 17', 'Čt 10'),
+        ('Čt 18', 'Pá 10'), ('Pá 18', 'So 09'), ('So 18', 'Ne 05')),
+    6: (('Ne 18', 'Út 09'), ('Út 17', 'St 09'), ('St 17', 'Čt 09'),
+        ('Čt 17', 'Pá 09'), ('Pá 17', 'So 08'), ('So 18', 'Ne 07')),
+    7: (('Ne 17', 'Út 09'), ('Út 17', 'So 09'), ('So 17', 'Ne 09')),
+    8: (('Ne 18', 'Po 10'), ('Po 18', 'Út 09'), ('Út 17', 'St 09'),
+        ('St 17', 'Pá 10'), ('Pá 18', 'So 09'), ('So 17', 'Ne 08')),
+    9: (('Ne 18', 'Po 09'), ('Po 17', 'Po 22'), ('Út 06', 'St 09'),
+        ('St 17', 'Čt 09'), ('Čt 17', 'Pá 09'), ('Pá 17', 'So 09'),
+        ('So 17', 'So 23')),
+    10: (('Ne 15', 'St 23'), ('Čt 07', 'Ne 07')),
+    11: (('Ne 08', 'St 22'), ('Čt 06', 'Ne 00')),
+    12: (('Ne 08', 'St 23'), ('Čt 07', 'Ne 00')),
+}
+
+# Profily daného týdenní šablonou po měsících.
+WEEK_TEMPLATE_PROFILES = {
+    'u': U_WEEK_BLOCKS,
+}
+
+WEEKDAY_ABBR = ('Po', 'Út', 'St', 'Čt', 'Pá', 'So', 'Ne')
+
+
+def _week_index(label):
+    """'Čt 06' -> hodina v týdnu 0–167 (pondělí 00:00 = 0)."""
+    day, hour = label.split()
+    return WEEKDAY_ABBR.index(day) * 24 + int(hour)
+
+
+def week_hours(blocks):
+    """Množina hodin v týdnu (0–167), které bloky šablony pokrývají.
+
+    Konec bloku je výlučný. Když je konec „dřív“ než začátek, blok přechází
+    přes neděli do pondělí.
+    """
+    out = set()
+    for start, end in blocks:
+        a, b = _week_index(start), _week_index(end)
+        if b <= a:
+            b += 168
+        out.update(k % 168 for k in range(a, b))
+    return out
+
 # PROM26 — pásmo dodané jako hodinová maska 0/1 na rok 2026. Maska se beze
 # zbytku rozkládá na okna po měsících plus pět výjimečných dní, takže ji
 # držíme v téhle podobě: dá se přečíst a zkontrolovat, na rozdíl od 8760
@@ -253,6 +321,9 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
                 T (bez stropu)  I 05–24 | II 02–24 | III 17–23 | IV 18–23 |
                               V 19–23 | VI,VII 18–24 | VIII 18–23 |
                               IX 18–23 | X 16–21 | XI 06–23 | XII 07–21
+      U       – týdenní šablona po měsících (bloky přes více dní), běh
+                ≤ 96 h, pauza ≥ 8 h, blok ≥ 4 h, max. 1 start denně;
+                šablony viz U_WEEK_BLOCKS
       OFFPEAK – doplněk peaku v rámci 24/7: víkendy a svátky celý den
                 + po–pá hodiny 0..7 a 20..23
       SPECIAL – měsíční vzor s denním rytmem (CZ svátky se neuplatňují):
@@ -304,6 +375,15 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
         for h, day in zip(hours, dt.dt.date.values):
             blocks = prom26_blocks(day)
             constraints.append(0 if any(lo <= h < hi for lo, hi in blocks) else -1)
+
+    elif profile_type in WEEK_TEMPLATE_PROFILES:
+        # Týdenní šablona po měsících: hodina v týdnu = den v týdnu × 24 + hodina.
+        tmpl = {m: week_hours(b)
+                for m, b in WEEK_TEMPLATE_PROFILES[profile_type].items()}
+        months = dt.dt.month.values
+        weekdays = dt.dt.weekday.values
+        constraints = [0 if int(wd) * 24 + int(h) in tmpl[int(m)] else -1
+                       for h, m, wd in zip(hours, months, weekdays)]
 
     elif profile_type == 'offpeak':
         constraints = [0 if ((not bd) or h < 8 or h >= 20) else -1

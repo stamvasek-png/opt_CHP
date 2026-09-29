@@ -126,13 +126,14 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 | `prom26` | dodaná hodinová maska na rok 2026 (níže) |
 | `s` | pevné pásmo nad FWD 2027 (3453 h), blok max. 16 h (níže) |
 | `t` | totéž bez stropu délky bloku (3435 h, níže) |
+| `u` | týdenní šablona po měsících, bloky přes více dní (7032 h, níže) |
 | `offpeak` | doplněk peaku: víkendy a svátky celý den + Po–Pá 20:00–08:00 |
 | `special` | měsíční vzor s denním rytmem |
 | `custom` | ručně vybrané hodiny |
 
 `peak`, `extpeak`, `extpsum` a `offpeak` respektují víkendy i české státní svátky.
 `season`, `seasonplus`, `p`, `s` a `t` jedou 7 dní v týdnu — okno určuje jen
-měsíc a hodina.
+měsíc a hodina. `u` má pro každý měsíc týdenní šablonu.
 
 ### EXTPSUM
 
@@ -268,6 +269,52 @@ Rozdíl mezi nimi je jen v délce zimního bloku. `s` nikde nejede přes 16 h.
 Pro srovnání: bez září by volný výběr 3300 nejdražších hodin měl 191,4 €/MWh
 proti 179,3 (`s`) a 181,4 €/MWh (`t`) — rozdíl je cena za to, že pásmo je
 uvnitř měsíce konzistentní.
+
+### U
+
+Týdenní šablona po měsících nad FWD křivkou 2027 (29. 9. 2026). Na rozdíl od
+profilů výše není vázaná na jedno okno denně — blok smí trvat přes několik dní.
+Každý týden v měsíci je stejný, víkend se ale smí chovat jinak než pracovní den.
+
+Rozpočet hodin není omezený. Šablony proto maximalizují **celkovou marži KGJ**
+proti kotli: 0,45 MW × FWD + ušetřený plyn kotle za skutečně využitelné teplo −
+plyn KGJ − servis 14 €/h − start 30 €. Bod zvratu je ~80 €/MWh, v září kvůli
+malé poptávce po teple ~114 €/MWh. Hledal je MILP přes všech 12 × 168 hodin
+týdne s těmito pravidly:
+
+- blok nejvýš **96 h**, mezi bloky aspoň **8 h** pauza,
+- blok aspoň **4 h** — do kratšího okna KGJ s výchozí min. dobou běhu nenastartuje,
+- nejvýš **1 start** za kalendářní den.
+
+| Měsíc | Týdenní šablona |
+|---|---|
+| I | So 07 → Po 22 · Út 06 → Pá 23 |
+| II | So 15 → Po 22 · Út 06 → Pá 23 |
+| III | Ne 16 → St 09 · St 17 → Ne 07 |
+| IV | Ne 18 → St 10 · St 18 → Čt 10 · Čt 18 → Pá 09 · Pá 17 → So 09 · So 18 → Ne 08 |
+| V | Ne 18 → Po 10 · Po 18 → Út 09 · Út 17 → Čt 10 · Čt 18 → Pá 10 · Pá 18 → So 09 · So 18 → Ne 05 |
+| VI | Ne 18 → Út 09 · Út 17 → St 09 · St 17 → Čt 09 · Čt 17 → Pá 09 · Pá 17 → So 08 · So 18 → Ne 07 |
+| VII | Ne 17 → Út 09 · Út 17 → So 09 · So 17 → Ne 09 |
+| VIII | Ne 18 → Po 10 · Po 18 → Út 09 · Út 17 → St 09 · St 17 → Pá 10 · Pá 18 → So 09 · So 17 → Ne 08 |
+| IX | Ne 18 → Po 09 · Po 17 → Po 22 · Út 06 → St 09 · St 17 → Čt 09 · Čt 17 → Pá 09 · Pá 17 → So 09 · So 17 → So 23 |
+| X | Ne 15 → St 23 · Čt 07 → Ne 07 |
+| XI | Ne 08 → St 22 · Čt 06 → Ne 00 |
+| XII | Ne 08 → St 23 · Čt 07 → Ne 00 |
+
+Konec bloku je výlučný (Po 22 = do 22:00). Od listopadu do března jede KGJ
+prakticky nepřetržitě se dvěma pauzami týdně, od dubna do září v nočních
+blocích od večerní do ranní špičky, takže vynechá solární poledne. V červenci
+polední propad trvá jen ~7 h, méně než povinná pauza, a projet ho vychází lépe.
+
+Za rok 2027 to je **7032 h**, průměrná FWD 152,7 €/MWh a **198 startů**. Při
+cenách 2027 je KGJ zisková v 7346 hodinách roku, proto nejvýnosnější
+konzistentní profil pokrývá tolik hodin. Se `s` a `t` (~3450 h, 365 startů)
+se tedy nedá srovnávat cenou za MWh — `u` jede dvojnásobek hodin s poloviční
+četností startů.
+
+Pravidla 96/8/4 a 1 start denně jsou ověřená na kalendáři 2027 včetně
+přechodů mezi měsíci a změny času. V jiném roce připadnou hranice měsíců na
+jiné dny v týdnu a na přechodu mezi měsíci mohou být porušená.
 
 ## Změna času v provozním plánu
 
