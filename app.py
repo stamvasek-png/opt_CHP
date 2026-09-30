@@ -930,8 +930,10 @@ with st.sidebar:
              "měsíce z limitu nevyčerpají, smí jít do jednoho dalšího měsíce, "
              "který pak bude neúplný. Výkon si model volí dál (min. zatížení "
              "až 100 %). V celých měsících se min. doba běhu a limit startů "
-             "neuplatní — hodiny určuje profil. BASE se nemění, FREE = celé "
-             "měsíce 24/7.")
+             "neuplatní — hodiny určuje profil. Kus bloku přes přelom měsíců "
+             "kratší než min. doba běhu jede jen spolu se zbytkem bloku, aby "
+             "KGJ kvůli novému měsíci nestartovala na hodinu. BASE se nemění, "
+             "FREE = celé měsíce 24/7.")
 
     # Provozní Omezení
     st.subheader("3️⃣ Omezení Provozování")
@@ -1587,7 +1589,9 @@ if st.session_state.fwd_data is not None and loc_file is not None:
         st.info(f"🗓️ Profily po celých měsících: v každém měsíci jede KGJ buď ve "
                 f"všech hodinách profilu, nebo v žádné; měsíce vybere solver. "
                 f"Zbytek limitu hodin smí jít do jednoho neúplného měsíce. "
-                f"V celých měsících {_skip} — hodiny určuje profil.")
+                f"V celých měsících {_skip} — hodiny určuje profil. Kus bloku "
+                f"přes přelom měsíců kratší než min. doba běhu jede jen se "
+                f"zbytkem bloku.")
 
     n_months = pd.to_datetime(df['datetime']).dt.month.nunique()
     run_monthly = st.checkbox(

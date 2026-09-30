@@ -407,6 +407,56 @@ def short_blocks(profile_type, min_runtime):
     return out
 
 
+def whole_month_owner(window, periods, min_rt):
+    """Měsíc, jehož binárka v režimu po celých měsících řídí hodinu okna.
+
+    Blok okna přes půlnoc na přelomu měsíců se mezi dva měsíce rozdělí. Když
+    je jeho kus v jednom z nich kratší než min. doba běhu, sám by znamenal
+    start jen na pár hodin: V jede 30. 4. 18–24 a 1. 5. 00–01, takže když
+    duben nejede a květen ano, KGJ by 1. 5. nastartovala na hodinu. Takový
+    kus proto patří k měsíci se zbytkem bloku a jede jen s ním. Jsou-li
+    kratší oba kusy, patří blok měsíci, ve kterém začíná.
+
+    Krátký běh hned na začátku dat nemá na co navázat — model bere KGJ před
+    začátkem dat jako vypnutou (X a Y mají 1. 1. 00–01) — a nepojede vůbec.
+
+    window  — bool na hodinu: hodina je v okně profilu
+    periods — kalendářní měsíc (pd.Period) na hodinu
+    Vrací měsíc na hodinu okna; None mimo okno a u útržku na začátku dat.
+    """
+    T = len(window)
+    owner = [periods[t] if window[t] else None for t in range(T)]
+    if min_rt <= 1:
+        return owner
+
+    def stretch(t, step):
+        """Souvislé hodiny okna od t směrem step, jen v měsíci hodiny t."""
+        per, out = periods[t], []
+        while 0 <= t < T and window[t] and periods[t] == per:
+            out.append(t)
+            t += step
+        return out
+
+    if T and window[0]:
+        head = stretch(0, 1)
+        if len(head) < min_rt:
+            for t in head:
+                owner[t] = None
+    for b in range(1, T):
+        if periods[b] == periods[b - 1] or not (window[b - 1] and window[b]):
+            continue
+        # Kus přebírá vlastníka zbytku bloku - i None, pokud blok začal
+        # útržkem na začátku dat.
+        head, tail = stretch(b, 1), stretch(b - 1, -1)
+        if len(head) < min_rt:
+            for t in head:
+                owner[t] = owner[b - 1]
+        elif len(tail) < min_rt:
+            for t in tail:
+                owner[t] = owner[b]
+    return owner
+
+
 def create_profile_constraints(df, profile_type, custom_hours=None):
     """
     Vytvoří constrainty pro KGJ provoz dle profilu.
@@ -849,14 +899,21 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         # 100 %) a roční limit hodin pak vybírá nejlepší celé měsíce. Co z
         # limitu celé měsíce nevyčerpají, smí jít do jednoho z nevybraných
         # měsíců (druhý krok u solve) — ten je neúplný a hodiny v něm se
-        # vybírají volně v okně profilu.
+        # vybírají volně v okně profilu. Kus bloku přes přelom měsíců kratší
+        # než min. doba běhu jede jen se zbytkem bloku (whole_month_owner).
+        min_rt = int(p['k_min_runtime'])
         if whole_months:
             periods = pd.to_datetime(df['datetime']).dt.to_period('M')
             leftover = bool(p.get('kgj_hour_limit_on') and p.get('kgj_hour_limit'))
+            owner = whole_month_owner([c == 0 for c in profile_constraints],
+                                      list(periods), min_rt)
             for t in range(T):
                 if profile_constraints[t] != 0:
                     continue
-                per = month_of[t] = periods.iloc[t]
+                per = month_of[t] = owner[t]
+                if per is None:
+                    model += on[t] == 0, f"month_edge_off_{t}"
+                    continue
                 if per not in month_full:
                     tag = f"{per.year}_{per.month:02d}"
                     month_full[per] = pulp.LpVariable(f"month_full_{tag}", cat='Binary')
@@ -899,7 +956,6 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
         # V celém měsíci určuje bloky natvrdo profil — min. doba běhu by jen
         # vyřadila měsíc s kratším blokem (PROM26 má 3h bloky). V neúplném
         # měsíci se hodiny vybírají volně, tam platí jako jindy.
-        min_rt = int(p['k_min_runtime'])
         for t in range(T):
             full = month_full[month_of[t]] if month_of[t] is not None else 0
             for dt in range(1, min_rt):

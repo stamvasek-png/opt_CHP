@@ -6,6 +6,9 @@ v nejvýnosnějších celých měsících, místo aby sbíral jednotlivé hodiny
 různě dlouhá okna. Co celé měsíce z limitu nevyčerpají, smí jít do jednoho
 dalšího měsíce — ten je neúplný a hodiny v něm se vybírají volně.
 
+Kus bloku přes přelom měsíců kratší než min. doba běhu jede jen se zbytkem
+bloku: KGJ nesmí startovat na hodinu jen proto, že začal nový měsíc.
+
 Bez tepla (poptávka 0) vydělává KGJ jen na elektřině: marže je zhruba
 0,725 × cena − 55 €/h, bod zvratu ~76 €/MWh.
 """
@@ -18,7 +21,8 @@ import pandas as pd
 
 import opt_core
 from conftest import SOLVER_TIME_LIMIT, make_df, make_params, make_uses
-from opt_core import create_profile_constraints, run_optimization_with_profile
+from opt_core import (create_profile_constraints, run_optimization_with_profile,
+                      whole_month_owner)
 
 APP = Path(opt_core.__file__).parent / 'app.py'
 
@@ -183,6 +187,100 @@ def test_short_profile_block_runs_despite_min_runtime():
                  k_min_runtime=4).sum() == 0
     on = solve(df, 'custom', whole=True, custom_hours=hours, k_min_runtime=4)
     assert (on == window(df, 'custom', hours)).all()
+
+
+# ── útržky bloků na přelomu měsíců ──────────────────────────────────
+
+def owners(win, months, min_rt):
+    """Měsíc vlastníka po hodinách; okno '#', měsíc jako číslice na hodinu."""
+    per = [pd.Period(f'2027-{int(m):02d}', 'M') for m in months]
+    got = whole_month_owner([c == '#' for c in win], per, min_rt)
+    return [o.month if o is not None else None for o in got]
+
+
+N = None
+
+
+def test_short_block_start_belongs_to_previous_month():
+    """3 h v dubnu, 2 h v květnu: květnový kus jede jen s dubnem."""
+    win, months = '..#####...###', '44444' '55555555'
+    assert owners(win, months, 3) == [N, N, 4, 4, 4, 4, 4, N, N, N, 5, 5, 5]
+
+
+def test_short_block_end_belongs_to_next_month():
+    """1 h v dubnu, 4 h v květnu: dubnová hodina jede jen s květnem."""
+    win, months = '....#####...', '44444' '5555555'
+    assert owners(win, months, 3) == [N, N, N, N, 5, 5, 5, 5, 5, N, N, N]
+
+
+def test_block_short_on_both_sides_belongs_where_it_starts():
+    win, months = '...####...', '44444' '55555'
+    assert owners(win, months, 3) == [N, N, N, 4, 4, 4, 4, N, N, N]
+
+
+def test_long_parts_and_min_runtime_1_stay_in_own_month():
+    win, months = '...####...', '44444' '55555'
+    assert owners(win, months, 2) == [N, N, N, 4, 4, 5, 5, N, N, N]
+    win, months = '..#####...###', '44444' '55555555'
+    assert owners(win, months, 1) == [N, N, 4, 4, 4, 5, 5, N, N, N, 5, 5, 5]
+
+
+def test_short_run_at_data_start_has_no_month():
+    """Na začátku dat není na co navázat — ani přes přelom měsíců."""
+    assert owners('##....####', '4' * 10, 3) == [N, N, N, N, N, N, 4, 4, 4, 4]
+    assert owners('####..', '4' * 6, 3) == [4, 4, 4, 4, N, N]
+    assert owners('####...', '44' '55555', 3) == [N] * 7
+
+
+def v_april_may(april, may):
+    """30. 4. 06:00 – 1. 5. 23:00 2027; V má okno 30. 4. 18–24, 1. 5. 00–01 a 19–24."""
+    idx = pd.date_range('2027-04-30 06:00', periods=42, freq='h')
+    return make_df(hours=len(idx), heat_demand=0.0, start='2027-04-30 06:00',
+                   ee_price=[april if t.month == 4 else may for t in idx])
+
+
+def test_block_fragment_does_not_start_the_month():
+    """Duben nejede: 1. 5. 00–01 by byl start na hodinu, zůstane stát."""
+    df = v_april_may(april=40.0, may=200.0)
+    t, win = df['datetime'], window(df, 'v')
+    assert list(t[win].dt.hour) == [18, 19, 20, 21, 22, 23, 0, 19, 20, 21, 22, 23]
+    on = solve(df, 'v', whole=True, k_min_runtime=4)
+    assert list(t[on].dt.hour) == [19, 20, 21, 22, 23]
+    assert (t[on].dt.day == 1).all()
+
+
+def test_block_fragment_finishes_the_previous_month():
+    """Duben jede, květen ne: blok 30. 4. 18:00 doběhne do 1. 5. 01:00."""
+    df = v_april_may(april=200.0, may=40.0)
+    on = solve(df, 'v', whole=True, k_min_runtime=4)
+    assert runs(on) == [7]
+    assert list(df['datetime'][on].dt.hour) == [18, 19, 20, 21, 22, 23, 0]
+
+
+def test_short_block_end_waits_for_next_month():
+    """OFFPEAK má noc 31. 3. 20:00 → 1. 4. 08:00, v březnu jen 4 h.
+
+    S min. dobou běhu 6 h patří ke dubnu; ten nejede, takže nejede ani ona.
+    Celý březen jede noc 30./31. 3. Duben je hluboko ve ztrátě, aby ho
+    nevytáhly ani 4 drahé březnové hodiny, které k němu teď patří.
+    """
+    idx = pd.date_range('2027-03-30 08:00', periods=48, freq='h')
+    df = make_df(hours=len(idx), heat_demand=0.0, start='2027-03-30 08:00',
+                 ee_price=[200.0 if t.month == 3 else -50.0 for t in idx])
+    assert runs(window(df, 'offpeak')) == [12, 12]
+    on = solve(df, 'offpeak', whole=True, k_min_runtime=6)
+    assert runs(on) == [12]
+    assert df['datetime'][on].iloc[0] == pd.Timestamp('2027-03-30 20:00')
+
+
+def test_short_run_at_data_start_stays_off():
+    """X 1. 1. 2027 00–01 je konec bloku ze středy; před daty KGJ nejela."""
+    df = make_df(hours=48, ee_price=200.0, heat_demand=0.0,
+                 start='2027-01-01 00:00')
+    win = window(df, 'x')
+    assert win[0] and not win[1:5].any()
+    on = solve(df, 'x', whole=True, k_min_runtime=4)
+    assert not on[0] and (on[1:] == win[1:]).all()
 
 
 def test_month_start_limit_does_not_apply():
