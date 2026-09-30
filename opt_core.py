@@ -225,15 +225,16 @@ def week_hours(blocks):
     return out
 
 
-def daily_blocks(start, end):
-    """Stejné okno každý den v týdnu, zapsané jako bloky týdenní šablony.
+def daily_blocks(start, end, days=range(7)):
+    """Stejné okno ve vybrané dny v týdnu, zapsané jako bloky týdenní šablony.
 
-    `daily_blocks(18, 2)` = každý den 18:00 → 02:00 dalšího dne. Konec je
+    `daily_blocks(18, 2)` = každý den 18:00 → 02:00 dalšího dne,
+    `daily_blocks(18, 9, range(5))` = jen Po–Pá večer do rána. Konec je
     výlučný; konec ≤ začátek znamená přechod přes půlnoc.
     """
     nxt = 1 if end <= start else 0
     return tuple((f'{WEEKDAY_ABBR[d]} {start:02d}',
-                  f'{WEEKDAY_ABBR[(d + nxt) % 7]} {end:02d}') for d in range(7))
+                  f'{WEEKDAY_ABBR[(d + nxt) % 7]} {end:02d}') for d in days)
 
 
 # Profil V — plán pro dispečink nad FWD křivkou 2027 (29. 9. 2026): blok
@@ -268,10 +269,53 @@ V_WEEK_BLOCKS = {
     12: V_WINTER_BLOCKS,
 }
 
+# Profil X — čistě z cenové analýzy FWD křivky 2027 (29. 9. 2026), bez
+# optimalizace a bez tepla. Do okna jdou hodiny, jejichž průměrná cena v daném
+# měsíci a typu dne (Po–Pá / So / Ne) je nad ≈ 128 €/MWh — nejdražších
+# ~5000 h roku —, srovnané do souvislých oken. Žádný blok nepřesáhne 48 h
+# a zima má nejvíc hodin, jaro a podzim méně, léto nejméně (i měsíc po měsíci):
+#   · I, II: nad hranicí je celý den i noc → nepřetržitě, pauza 01–05
+#     (nejlevnější hodiny) každou druhou noc, bloky nejvýš 44 h,
+#   · XI, XII: noci pod hranicí → denně 06–23,
+#   · III–V: polední propad → od večera přes noc do ranní špičky, neděle
+#     přes den stojí,
+#   · IX: ranní i večerní špička (v pracovní dny dva starty),
+#   · X: pracovní dny 06–23, víkend jen večerní špička,
+#   · VI–VIII: jen večer 18–02.
+# Svátky se chovají jako běžný den v týdnu.
+X_WINTER_BLOCKS = (('Ne 05', 'Po 01'), ('Po 05', 'St 01'),
+                   ('St 05', 'Pá 01'), ('Pá 05', 'Ne 01'))
+X_WEEK_BLOCKS = {
+    1: X_WINTER_BLOCKS,
+    2: X_WINTER_BLOCKS,
+    3: daily_blocks(16, 10, range(5)) + (('So 17', 'So 22'), ('Ne 18', 'Po 10')),
+    4: daily_blocks(18, 9, range(5)) + (('So 18', 'Ne 00'), ('Ne 18', 'Po 09')),
+    5: daily_blocks(18, 9, range(5)) + (('So 19', 'Ne 00'), ('Ne 19', 'Po 09')),
+    6: daily_blocks(18, 2),
+    7: daily_blocks(18, 2),
+    8: daily_blocks(18, 2),
+    9: daily_blocks(17, 23) + daily_blocks(6, 10, range(5)),
+    10: daily_blocks(6, 23, range(5)) + (('So 17', 'So 21'), ('Ne 17', 'Ne 21')),
+    11: daily_blocks(6, 23),
+    12: daily_blocks(6, 23),
+}
+
+# Profil Y — X s letními rány. Přesný výběr nejlepšího týdenního vzoru pro
+# každý měsíc (typický týden, stejný počet hodin jako X) se od X liší hlavně
+# v létě: v pracovní dny vynese ranní špička 05–09 víc než noční hodiny 00–02.
+# Y proto ve VI–VIII jede Po–Pá 05–09 a 18–23 (dva starty), o víkendu 18–24;
+# ostatní měsíce má stejné jako X.
+Y_SUMMER_BLOCKS = (daily_blocks(5, 9, range(5)) + daily_blocks(18, 23, range(5))
+                   + daily_blocks(18, 0, (5, 6)))
+Y_WEEK_BLOCKS = {**X_WEEK_BLOCKS,
+                 6: Y_SUMMER_BLOCKS, 7: Y_SUMMER_BLOCKS, 8: Y_SUMMER_BLOCKS}
+
 # Profily daného týdenní šablonou po měsících.
 WEEK_TEMPLATE_PROFILES = {
     'u': U_WEEK_BLOCKS,
     'v': V_WEEK_BLOCKS,
+    'x': X_WEEK_BLOCKS,
+    'y': Y_WEEK_BLOCKS,
 }
 
 # Profil W — zadaný tabulkou po měsících: pracovní dny a soboty mají vlastní
@@ -396,6 +440,11 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
                 Čt 13 → So 23 | III denně 17–24 | IV,VI–VIII denně 18–02 |
                 V denně 19–01 | IX bez provozu |
                 X Po 06 → Čt 23 + Pá 15–23 + So 16–21
+      X       – z cenové analýzy FWD, ~5000 h, blok ≤ 48 h: I,II nepřetržitě
+                s pauzou 01–05 každou 2. noc | XI,XII denně 06–23 |
+                III Po–Pá 16 → 10 | IV,V Po–Pá 18 → 09 | IX 17–23 + Po–Pá
+                06–10 | X Po–Pá 06–23 | VI–VIII denně 18–02
+      Y       – jako X, jen VI–VIII Po–Pá 05–09 a 18–23, So–Ne 18–24
       W       – pracovní dny a soboty s oknem po měsících, neděle a CZ
                 svátky stojí: I,II,XI,XII Po–Pá 06–24, So 07–22 | III 16–22 |
                 IV,X 17–23 | V–IX 18–24 (III–X So stejně jako Po–Pá)
