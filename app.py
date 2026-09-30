@@ -1878,6 +1878,138 @@ if st.session_state.monthly_profile_results is not None:
 
 
 # ────────────────────────────────────────────────
+# DETAIL PROFILU
+# ────────────────────────────────────────────────
+@st.fragment
+def render_profile_detail(scenarios, profiles, h_cover):
+    """Metriky a hodinové grafy jednoho profilu, vybraného přepínačem.
+
+    Dřív měl každý profil vlastní záložku. Streamlit ale posílá obsah všech
+    záložek najednou: 16 profilů je přes 1100 zpráv a asi 85 MB grafů.
+    Server Streamlitu drží pro prohlížeč frontu nejvýš 500 zpráv, a když
+    přeteče, spojení potichu zahodí - stránka pak zůstane viset uprostřed
+    záložek a tlačítka pod nimi se nevykreslí. Kreslí se proto jen vybraný
+    profil a přepnutí překreslí jen tenhle fragment, ne celou stránku.
+    """
+    pr = st.radio("Profil", profiles, horizontal=True,
+                  format_func=str.upper, label_visibility="collapsed")
+    _sc        = scenarios[pr]
+    result     = _sc['result']
+    res        = result['res']
+    smoothness = _sc['smoothness']
+
+    col_sm_1, col_sm_2, col_sm_3, col_sm_4, col_sm_5, col_sm_6 = st.columns(6)
+    with col_sm_1:
+        st.metric("Využití KGJ", f"{smoothness['utilization_pct']:.1f}%",
+                  help="Podíl hodin, kdy KGJ běželo")
+    with col_sm_2:
+        st.metric("Stabilita", f"{smoothness['stability_score']:.1f}%",
+                  help="100% = velmi hladký provoz")
+    with col_sm_3:
+        st.metric("Přechodů", f"{smoothness['transitions']}",
+                  help="Počet start-stop cyklů")
+    with col_sm_4:
+        st.metric("Avg Runtime", f"{smoothness['avg_run_hours']:.1f} h")
+    with col_sm_5:
+        st.metric("Min Runtime", f"{smoothness['min_run_hours']:.0f} h")
+    with col_sm_6:
+        st.metric("Max Runtime", f"{smoothness['max_run_hours']:.0f} h")
+
+    total_profit    = result['total_profit']
+    total_shortfall = res['Shortfall [MW]'].sum()
+    target_heat     = (res['Poptávka tepla [MW]'] * h_cover).sum()
+    coverage        = 100*(1 - total_shortfall/target_heat) if target_heat > 0 else 100.0
+    total_ee_gen    = res['EE z KGJ [MW]'].sum() + res['EE z FVE [MW]'].sum()
+    kgj_hours       = int(res['KGJ on'].sum())
+    rev_teplo_total = res['Rev teplo [€]'].sum()
+    rev_ee_total    = res['Rev EE [€]'].sum()
+    c_gas_total     = res['Nákl plyn KGJ [€]'].sum() + res['Nákl plyn kotel [€]'].sum()
+    c_ee_total      = res['Nákl EE import [€]'].sum() + res['Nákl EE EK [€]'].sum()
+    c_imp_total     = res['Nákl imp tepla [€]'].sum()
+    c_other_total   = (res['Nákl starty [€]'].sum() + res['Nákl BESS [€]'].sum()
+                       + res['Nákl servis KGJ [€]'].sum())
+
+    st.markdown("#### 📊 Klíčové Metriky")
+    m1, m2, m3, m4, m5, m6 = st.columns(6)
+    m1.metric("Celkový zisk", f"{total_profit:,.0f} €")
+    m2.metric("Shortfall", f"{total_shortfall:,.1f} MWh")
+    m3.metric("Pokrytí poptávky", f"{coverage:.1f} %")
+    m4.metric("Export EE", f"{res['EE export [MW]'].sum():,.1f} MWh")
+    m5.metric("Výroba EE", f"{total_ee_gen:,.1f} MWh")
+    m6.metric("Provozní hodiny KGJ", f"{kgj_hours:,} h")
+
+    st.markdown("#### 💰 Rozpad Zisku")
+    r1, r2, r3, r4, r5, r6 = st.columns(6)
+    r1.metric("🔥 Příjmy teplo", f"{rev_teplo_total:,.0f} €")
+    r2.metric("⚡ Příjmy EE", f"{rev_ee_total:,.0f} €")
+    r3.metric("🔴 Nákl plyn", f"{c_gas_total:,.0f} €")
+    r4.metric("🔴 Nákl EE", f"{c_ee_total:,.0f} €")
+    r5.metric("🔴 Nákl import", f"{c_imp_total:,.0f} €")
+    r6.metric("🔴 Ostatní", f"{c_other_total:,.0f} €")
+
+    if 'CO₂ Celkem [tCO₂]' in res.columns:
+        st.markdown("#### 🌿 Emise CO₂")
+        co_1, co_2, co_3, co_4 = st.columns(4)
+        co_1.metric("CO₂ celkem", f"{res['CO₂ Celkem [tCO₂]'].sum():,.1f} t")
+        co_2.metric("CO₂ KGJ", f"{res['CO₂ KGJ [tCO₂]'].sum():,.1f} t")
+        co_3.metric("CO₂ Kotel", f"{res['CO₂ Kotel [tCO₂]'].sum():,.1f} t")
+        co_4.metric("CO₂ Síť (netto)", f"{res['CO₂ Síť [tCO₂]'].sum():,.1f} t")
+
+    st.markdown("#### 🔥 Pokrytí Tepelné Poptávky")
+    fig = go.Figure()
+    for col, name, color in [
+        ('KGJ [MW_th]',          'KGJ',         '#27ae60'),
+        ('Kotel [MW_th]',        'Kotel',        '#3498db'),
+        ('Elektrokotel [MW_th]', 'Elektrokotel', '#9b59b6'),
+        ('Import tepla [MW_th]', 'Import tepla', '#e74c3c'),
+        ('TES netto [MW_th]',    'TES netto',    '#f39c12'),
+    ]:
+        if col in res.columns:
+            fig.add_trace(go.Scatter(x=res['Čas'], y=res[col].clip(lower=0),
+                name=name, stackgroup='teplo', fillcolor=color, line_width=0))
+    fig.add_trace(go.Scatter(x=res['Čas'], y=res['Shortfall [MW]'],
+        name='Nedodáno ⚠️', stackgroup='teplo', fillcolor='rgba(200,0,0,0.45)', line_width=0))
+    fig.add_trace(go.Scatter(x=res['Čas'], y=res['Poptávka tepla [MW]']*h_cover,
+        name='Cílová poptávka', mode='lines', line=dict(color='black', width=2, dash='dot')))
+    fig.update_layout(height=450, hovermode='x unified')
+    st.plotly_chart(fig, width='stretch', key=f"teplo_{pr}")
+
+    st.markdown("#### ⚡ Bilance Elektřiny")
+    fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
+        row_heights=[0.5, 0.5], subplot_titles=("Zdroje EE [MW]", "Spotřeba / export EE [MW]"))
+    for col, name, color in [
+        ('EE z KGJ [MW]',      'KGJ',       '#2ecc71'),
+        ('EE z FVE [MW]',      'FVE',        '#f1c40f'),
+        ('EE import [MW]',     'Import EE',  '#2980b9'),
+        ('BESS vybíjení [MW]', 'BESS výdej', '#8e44ad'),
+    ]:
+        if col in res.columns:
+            fig.add_trace(go.Scatter(x=res['Čas'], y=res[col], name=name,
+                stackgroup='vyroba', fillcolor=color), row=1, col=1)
+    for col, name, color in [
+        ('EE do EK [MW]',      'EK',            '#e74c3c'),
+        ('BESS nabíjení [MW]', 'BESS nabíjení', '#34495e'),
+        ('EE export [MW]',     'Export EE',     '#16a085'),
+    ]:
+        if col in res.columns:
+            fig.add_trace(go.Scatter(x=res['Čas'], y=-res[col], name=name,
+                stackgroup='spotreba', fillcolor=color), row=2, col=1)
+    fig.update_layout(height=600, hovermode='x unified')
+    st.plotly_chart(fig, width='stretch', key=f"ee_{pr}")
+
+    st.markdown("#### 💰 Kumulativní Zisk v Čase")
+    _pr_color = PROFILE_COLORS.get(pr, '#27ae60')
+    _pr_hex   = _pr_color.replace('#', '')
+    _pr_r, _pr_g, _pr_b = int(_pr_hex[0:2],16), int(_pr_hex[2:4],16), int(_pr_hex[4:6],16)
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=res['Čas'], y=res['Kumulativní zisk [€]'],
+        fill='tozeroy', fillcolor=f'rgba({_pr_r},{_pr_g},{_pr_b},0.2)',
+        line_color=_pr_color, name='Kum. zisk'))
+    fig.update_layout(height=350, hovermode='x unified')
+    st.plotly_chart(fig, width='stretch', key=f"kum_{pr}")
+
+
+# ────────────────────────────────────────────────
 # SCENARIO COMPARISON VIEW
 # ────────────────────────────────────────────────
 if st.session_state.scenario_results is not None:
@@ -2044,8 +2176,12 @@ if st.session_state.scenario_results is not None:
     # ── Waterfall – rozkad zisku per profil ──────────────────────────
     if breakdown_data:
         st.markdown("**Waterfall – rozkad čistého zisku dle profilu**")
-        wf_cols = st.columns(len(breakdown_data))
+        # Po radcich: vsechny vedle sebe by pri 16 profilech mely po 56 px
+        # a sloupce vodopadu by v nich nebyly videt vubec.
+        _wf_per_row = 5
         for col_idx, row in enumerate(breakdown_data):
+            if col_idx % _wf_per_row == 0:
+                wf_cols = st.columns(min(_wf_per_row, len(breakdown_data)))
             pr_key = row['Profil'].lower()
             pr_color = PROFILE_COLORS.get(pr_key, '#888')
             items = {
@@ -2079,132 +2215,16 @@ if st.session_state.scenario_results is not None:
                 showlegend=False,
                 margin=dict(l=10, r=10, t=50, b=10),
             )
-            with wf_cols[col_idx]:
+            with wf_cols[col_idx % _wf_per_row]:
                 st.plotly_chart(fig_wf, width='stretch', key=f"wf_{row['Profil'].lower()}")
 
-    # ── Detailní view – záložka per profil ──────────────────────────
+    # ── Detailní view – vybraný profil ──────────────────────────────
     st.divider()
     st.subheader("🔍 Detailní analýza per profil")
 
     _tab_prs = [pr for pr in profiles_to_run if pr in scenarios and scenarios[pr]['result'] is not None]
     if _tab_prs:
-        _dtabs = st.tabs([pr.upper() for pr in _tab_prs])
-        for _dtab, pr in zip(_dtabs, _tab_prs):
-            with _dtab:
-                _sc     = scenarios[pr]
-                result  = _sc['result']
-                res     = result['res']
-                smoothness = _sc['smoothness']
-
-                col_sm_1, col_sm_2, col_sm_3, col_sm_4, col_sm_5, col_sm_6 = st.columns(6)
-                with col_sm_1:
-                    st.metric("Využití KGJ", f"{smoothness['utilization_pct']:.1f}%",
-                              help="Podíl hodin, kdy KGJ běželo")
-                with col_sm_2:
-                    st.metric("Stabilita", f"{smoothness['stability_score']:.1f}%",
-                              help="100% = velmi hladký provoz")
-                with col_sm_3:
-                    st.metric("Přechodů", f"{smoothness['transitions']}",
-                              help="Počet start-stop cyklů")
-                with col_sm_4:
-                    st.metric("Avg Runtime", f"{smoothness['avg_run_hours']:.1f} h")
-                with col_sm_5:
-                    st.metric("Min Runtime", f"{smoothness['min_run_hours']:.0f} h")
-                with col_sm_6:
-                    st.metric("Max Runtime", f"{smoothness['max_run_hours']:.0f} h")
-
-                total_profit    = result['total_profit']
-                total_shortfall = res['Shortfall [MW]'].sum()
-                target_heat     = (res['Poptávka tepla [MW]'] * p['h_cover']).sum()
-                coverage        = 100*(1 - total_shortfall/target_heat) if target_heat > 0 else 100.0
-                total_ee_gen    = res['EE z KGJ [MW]'].sum() + res['EE z FVE [MW]'].sum()
-                kgj_hours       = int(res['KGJ on'].sum())
-                rev_teplo_total = res['Rev teplo [€]'].sum()
-                rev_ee_total    = res['Rev EE [€]'].sum()
-                c_gas_total     = res['Nákl plyn KGJ [€]'].sum() + res['Nákl plyn kotel [€]'].sum()
-                c_ee_total      = res['Nákl EE import [€]'].sum() + res['Nákl EE EK [€]'].sum()
-                c_imp_total     = res['Nákl imp tepla [€]'].sum()
-                c_other_total   = (res['Nákl starty [€]'].sum() + res['Nákl BESS [€]'].sum()
-                                   + res['Nákl servis KGJ [€]'].sum())
-
-                st.markdown("#### 📊 Klíčové Metriky")
-                m1, m2, m3, m4, m5, m6 = st.columns(6)
-                m1.metric("Celkový zisk", f"{total_profit:,.0f} €")
-                m2.metric("Shortfall", f"{total_shortfall:,.1f} MWh")
-                m3.metric("Pokrytí poptávky", f"{coverage:.1f} %")
-                m4.metric("Export EE", f"{res['EE export [MW]'].sum():,.1f} MWh")
-                m5.metric("Výroba EE", f"{total_ee_gen:,.1f} MWh")
-                m6.metric("Provozní hodiny KGJ", f"{kgj_hours:,} h")
-
-                st.markdown("#### 💰 Rozpad Zisku")
-                r1, r2, r3, r4, r5, r6 = st.columns(6)
-                r1.metric("🔥 Příjmy teplo", f"{rev_teplo_total:,.0f} €")
-                r2.metric("⚡ Příjmy EE", f"{rev_ee_total:,.0f} €")
-                r3.metric("🔴 Nákl plyn", f"{c_gas_total:,.0f} €")
-                r4.metric("🔴 Nákl EE", f"{c_ee_total:,.0f} €")
-                r5.metric("🔴 Nákl import", f"{c_imp_total:,.0f} €")
-                r6.metric("🔴 Ostatní", f"{c_other_total:,.0f} €")
-
-                if 'CO₂ Celkem [tCO₂]' in res.columns:
-                    st.markdown("#### 🌿 Emise CO₂")
-                    co_1, co_2, co_3, co_4 = st.columns(4)
-                    co_1.metric("CO₂ celkem", f"{res['CO₂ Celkem [tCO₂]'].sum():,.1f} t")
-                    co_2.metric("CO₂ KGJ", f"{res['CO₂ KGJ [tCO₂]'].sum():,.1f} t")
-                    co_3.metric("CO₂ Kotel", f"{res['CO₂ Kotel [tCO₂]'].sum():,.1f} t")
-                    co_4.metric("CO₂ Síť (netto)", f"{res['CO₂ Síť [tCO₂]'].sum():,.1f} t")
-
-                st.markdown("#### 🔥 Pokrytí Tepelné Poptávky")
-                fig = go.Figure()
-                for col, name, color in [
-                    ('KGJ [MW_th]',          'KGJ',         '#27ae60'),
-                    ('Kotel [MW_th]',        'Kotel',        '#3498db'),
-                    ('Elektrokotel [MW_th]', 'Elektrokotel', '#9b59b6'),
-                    ('Import tepla [MW_th]', 'Import tepla', '#e74c3c'),
-                    ('TES netto [MW_th]',    'TES netto',    '#f39c12'),
-                ]:
-                    if col in res.columns:
-                        fig.add_trace(go.Scatter(x=res['Čas'], y=res[col].clip(lower=0),
-                            name=name, stackgroup='teplo', fillcolor=color, line_width=0))
-                fig.add_trace(go.Scatter(x=res['Čas'], y=res['Shortfall [MW]'],
-                    name='Nedodáno ⚠️', stackgroup='teplo', fillcolor='rgba(200,0,0,0.45)', line_width=0))
-                fig.add_trace(go.Scatter(x=res['Čas'], y=res['Poptávka tepla [MW]']*p['h_cover'],
-                    name='Cílová poptávka', mode='lines', line=dict(color='black', width=2, dash='dot')))
-                fig.update_layout(height=450, hovermode='x unified')
-                st.plotly_chart(fig, width='stretch', key=f"teplo_{pr}")
-
-                st.markdown("#### ⚡ Bilance Elektřiny")
-                fig = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.08,
-                    row_heights=[0.5, 0.5], subplot_titles=("Zdroje EE [MW]", "Spotřeba / export EE [MW]"))
-                for col, name, color in [
-                    ('EE z KGJ [MW]',      'KGJ',       '#2ecc71'),
-                    ('EE z FVE [MW]',      'FVE',        '#f1c40f'),
-                    ('EE import [MW]',     'Import EE',  '#2980b9'),
-                    ('BESS vybíjení [MW]', 'BESS výdej', '#8e44ad'),
-                ]:
-                    if col in res.columns:
-                        fig.add_trace(go.Scatter(x=res['Čas'], y=res[col], name=name,
-                            stackgroup='vyroba', fillcolor=color), row=1, col=1)
-                for col, name, color in [
-                    ('EE do EK [MW]',      'EK',            '#e74c3c'),
-                    ('BESS nabíjení [MW]', 'BESS nabíjení', '#34495e'),
-                    ('EE export [MW]',     'Export EE',     '#16a085'),
-                ]:
-                    if col in res.columns:
-                        fig.add_trace(go.Scatter(x=res['Čas'], y=-res[col], name=name,
-                            stackgroup='spotreba', fillcolor=color), row=2, col=1)
-                fig.update_layout(height=600, hovermode='x unified')
-                st.plotly_chart(fig, width='stretch', key=f"ee_{pr}")
-
-                st.markdown("#### 💰 Kumulativní Zisk v Čase")
-                _pr_color = PROFILE_COLORS.get(pr, '#27ae60')
-                _pr_hex   = _pr_color.replace('#', '')
-                _pr_r, _pr_g, _pr_b = int(_pr_hex[0:2],16), int(_pr_hex[2:4],16), int(_pr_hex[4:6],16)
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=res['Čas'], y=res['Kumulativní zisk [€]'],
-                    fill='tozeroy', fillcolor=f'rgba({_pr_r},{_pr_g},{_pr_b},0.2)',
-                    line_color=_pr_color, name='Kum. zisk'))
-                fig.update_layout(height=350, hovermode='x unified')
-                st.plotly_chart(fig, width='stretch', key=f"kum_{pr}")
+        render_profile_detail(scenarios, _tab_prs, p['h_cover'])
 
     # ── Download scénářů ──
     st.divider()
