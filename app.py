@@ -295,6 +295,8 @@ def build_parameters_df(params, uses):
         add('KGJ', 'Náklady na start [€/start]', p.get('k_start_cost', 0))
         add('KGJ', 'Min. doba běhu [hod]', p.get('k_min_runtime', 0))
         add('KGJ', 'Servisní náklad [€/h provozu]', p.get('k_service_cost', 0))
+        if p.get('kgj_no_heat_dump'):
+            add('KGJ', 'Zákaz maření tepla', 'ANO')
         if p.get('kgj_ramp_on'):
             add('KGJ', 'Doba nájezdu — elektřina [min]', p.get('k_ramp_up_el_min', 0))
             add('KGJ', 'Doba sjezdu — elektřina [min]', p.get('k_ramp_down_el_min', 0))
@@ -1069,6 +1071,13 @@ with t_tech:
         p['k_el'] = k_el_derived
         st.caption(f"ℹ️ Odvozený el. výkon: **{k_el_derived:.3f} MW** | "
                    f"Celková účinnost: **{p['k_eff_th']+p['k_eff_el']:.2f}**")
+        p['kgj_no_heat_dump'] = st.checkbox(
+            "Zakázat maření tepla", value=False, key="cb_no_heat_dump",
+            help="KGJ smí vyrobit jen tolik tepla, kolik soustava odebere nebo "
+                 "uloží do TES. Při nízké poptávce jede sníženým výkonem, a když "
+                 "poptávka klesne pod min. zatížení, stojí. Po celých měsících "
+                 "solver vybere jen měsíce, které jdou odjet bez maření; BASE "
+                 "(24/7) v takové hodině spočítat nejde.")
         # Rampy nájezdu / sjezdu
         p['kgj_ramp_on'] = st.checkbox(
             "Modelovat nájezd / sjezd KGJ", value=False,
@@ -1373,7 +1382,11 @@ def run_scenario_analysis(df, params, uses, profiles_to_run, custom_hours=None,
                 'profile_name': profile.upper(),
             }
         else:
-            st.warning(f"⚠️ Profil {profile.upper()} nenašel řešení – zkontroluj parametry nebo omezení hodin.")
+            _why = (" Je zapnutý zákaz maření tepla: když profil drží KGJ v "
+                    "provozu i v hodině, kdy soustava neodebere ani min. výkon "
+                    "(typicky BASE), řešení neexistuje."
+                    if params.get('kgj_no_heat_dump') else "")
+            st.warning(f"⚠️ Profil {profile.upper()} nenašel řešení – zkontroluj parametry nebo omezení hodin.{_why}")
 
         progress_bar.progress((idx + 1) / len(profiles_to_run))
     

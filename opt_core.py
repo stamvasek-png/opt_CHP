@@ -895,7 +895,11 @@ def run_optimization_with_profile(df, params, uses, profile_type='free', custom_
     ee_export      = pulp.LpVariable.dicts("ee_export",  range(T), 0)
     ee_import      = pulp.LpVariable.dicts("ee_import",  range(T), 0)
     heat_shortfall = pulp.LpVariable.dicts("shortfall",  range(T), 0)
-    heat_dump      = pulp.LpVariable.dicts("heat_dump",  range(T), 0)  # přebytečné teplo zahozeno
+    # Zákaz maření: teplo nad poptávku nejde zahodit, takže KGJ vyrobí jen to,
+    # co soustava odebere nebo uloží do TES — pod min. zatížením stojí.
+    no_dump        = bool(p.get('kgj_no_heat_dump'))
+    heat_dump      = pulp.LpVariable.dicts("heat_dump",  range(T), 0,
+                                           0 if no_dump else None)  # přebytečné teplo zahozeno
 
     # Rozdělení toku EE do EK a do BESS nabíjení podle zdroje (lokální výroba vs. grid).
     # Lokální větve nepodléhají distribuci; grid větve ano. Když je internal_ee_use vypnut,

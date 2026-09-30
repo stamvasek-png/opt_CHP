@@ -583,6 +583,23 @@ období, nebo hodina, která kvůli přechodu na letní čas neexistuje. Zdvojen
 hodina na konci října se sloučí do jedné buňky, `P` když jednotka běžela
 aspoň v jedné z nich.
 
+## Zákaz maření tepla
+
+Zaškrtávátko **Zakázat maření tepla** (záložka **Technika**, sekce KGJ) nedovolí
+teplo zahazovat. KGJ pak smí vyrobit jen tolik tepla, kolik soustava odebere
+nebo uloží do TES. Při nízké poptávce jede sníženým výkonem místo plného
+výkonu s mařením. Když poptávka klesne pod min. zatížení, stojí.
+
+- Po celých měsících solver vybere jen měsíce, které jdou odjet celé bez
+  maření.
+- BASE (24/7) nejde spočítat, pokud v některé hodině soustava neodebere ani
+  min. výkon KGJ a teplo nejde uložit do TES. Aplikace to u profilu ohlásí.
+- Metriky mařeného tepla pak vycházejí nulové.
+
+Na datech 2027 (KGJ + kotel, min. zatížení 50 %) klesne u X maření
+z 65 MWh na nulu a zisk o 0,5 %. KGJ jede stejně dlouho, jen v září sníženým
+výkonem.
+
 ## Rampy nájezdu / sjezdu KGJ
 
 Volitelně (záložka **Technika** → *Modelovat nájezd / sjezd KGJ*) model rozprostře
