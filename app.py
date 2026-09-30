@@ -149,6 +149,7 @@ from opt_core import (
     build_month_grid,
     calculate_smoothness_metrics,
     find_dst_hours,
+    heat_dump_stats,
     run_optimization_with_profile,
     short_blocks,
 )
@@ -174,6 +175,7 @@ def create_scenario_comparison_df(scenarios):
         profit = scenario['result']['total_profit']
         shortfall = res['Shortfall [MW]'].sum() if 'Shortfall [MW]' in res.columns else 0
         co2_total = res['CO₂ Celkem [tCO₂]'].sum() if 'CO₂ Celkem [tCO₂]' in res.columns else None
+        dump = heat_dump_stats(res)
 
         row = {
             'Profil': profile_name.upper(),
@@ -184,6 +186,11 @@ def create_scenario_comparison_df(scenarios):
             'Avg Runtime [h]': f"{smooth['avg_run_hours']:.1f}",
             'Total Hours ON': smooth['total_on_hours'],
             'Shortfall [MWh]': f"{shortfall:.1f}",
+            'Mařené teplo [MWh]': f"{dump['total_mwh']:.1f}",
+            'Hodin maření': dump['hours'],
+            'Ø maření v hodině [MWh]': f"{dump['avg_mwh']:.2f}",
+            'Ø souvislé maření [h]': f"{dump['avg_run_hours']:.1f}",
+            'Max souvislé maření [h]': dump['max_run_hours'],
         }
         if co2_total is not None:
             row['CO₂ [tCO₂]'] = f"{co2_total:,.1f}"
@@ -618,6 +625,14 @@ def to_excel_operating_plan(scenario, profile, params=None, uses=None):
             ('Výroba EE z KGJ [MWh]', res['EE z KGJ [MW]'].sum()),
             ('Export EE [MWh]', res['EE export [MW]'].sum()),
             ('Shortfall [MWh]', res['Shortfall [MW]'].sum()),
+        ]
+        dump = heat_dump_stats(res)
+        kpis += [
+            ('Mařené teplo celkem [MWh]', dump['total_mwh']),
+            ('Hodiny maření tepla [h]', dump['hours']),
+            ('Průměr v hodině maření [MWh]', dump['avg_mwh']),
+            ('Průměrné souvislé maření [h]', dump['avg_run_hours']),
+            ('Nejdelší souvislé maření [h]', dump['max_run_hours']),
         ]
         if 'CO₂ Celkem [tCO₂]' in res.columns:
             kpis.append(('CO₂ celkem [tCO₂]', res['CO₂ Celkem [tCO₂]'].sum()))
@@ -1958,6 +1973,15 @@ def render_profile_detail(scenarios, profiles, h_cover):
         co_2.metric("CO₂ KGJ", f"{res['CO₂ KGJ [tCO₂]'].sum():,.1f} t")
         co_3.metric("CO₂ Kotel", f"{res['CO₂ Kotel [tCO₂]'].sum():,.1f} t")
         co_4.metric("CO₂ Síť (netto)", f"{res['CO₂ Síť [tCO₂]'].sum():,.1f} t")
+
+    st.markdown("#### ♨️ Mařené Teplo")
+    dump = heat_dump_stats(res)
+    d1, d2, d3, d4, d5 = st.columns(5)
+    d1.metric("Mařené teplo celkem", f"{dump['total_mwh']:,.1f} MWh")
+    d2.metric("Hodin maření", f"{dump['hours']:,} h")
+    d3.metric("Průměr v hodině maření", f"{dump['avg_mwh']:,.2f} MWh")
+    d4.metric("Průměrné souvislé maření", f"{dump['avg_run_hours']:.1f} h")
+    d5.metric("Nejdelší souvislé maření", f"{dump['max_run_hours']:,} h")
 
     st.markdown("#### 🔥 Pokrytí Tepelné Poptávky")
     fig = go.Figure()

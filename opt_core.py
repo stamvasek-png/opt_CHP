@@ -656,6 +656,39 @@ def calculate_smoothness_metrics(res):
     }
 
 
+# Mene zahozeneho tepla v hodine je jen numericky sum resice, ne mareni.
+HEAT_DUMP_EPS_MW = 1e-6
+
+
+def heat_dump_stats(res):
+    """Mařené (zahozené) teplo: kolik, v kolika hodinách a jak dlouho souvisle.
+
+    Vrací dict:
+      total_mwh     — mařené teplo celkem [MWh]
+      hours         — počet hodin, kdy se teplo maří
+      avg_mwh       — průměrně mařené teplo v hodině, kdy se maří [MWh]
+      avg_run_hours — průměrná délka souvislého maření [h]
+      max_run_hours — nejdelší souvislé maření [h]
+    Výsledek bez sloupce zahozeného tepla dá samé nuly.
+    """
+    col = 'Zahozené teplo [MW]'
+    dump = (res[col].to_numpy(dtype=float) if col in res.columns
+            else np.zeros(len(res)))
+    active = dump > HEAT_DUMP_EPS_MW
+    # Delky souvislych useku: kde mareni zacina (+1) a kde konci (-1)
+    edges = np.diff(np.concatenate(([0], active.astype(int), [0])))
+    runs = np.flatnonzero(edges == -1) - np.flatnonzero(edges == 1)
+    hours = int(active.sum())
+    total = float(dump[active].sum())
+    return {
+        'total_mwh':     total,
+        'hours':         hours,
+        'avg_mwh':       total / hours if hours else 0.0,
+        'avg_run_hours': float(runs.mean()) if len(runs) else 0.0,
+        'max_run_hours': int(runs.max()) if len(runs) else 0,
+    }
+
+
 # ────────────────────────────────────────────────
 # POMOCNÉ FUNKCE PRO SOLVER
 # ────────────────────────────────────────────────

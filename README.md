@@ -555,6 +555,17 @@ sešit (`kgj_provozni_plan_<profil>.xlsx`):
 | `LEDEN` … | jeden list na měsíc s mřížkou provozu |
 | `Parametry` | použité nastavení |
 
+Souhrn za období ukazuje i **mařené teplo** — teplo z KGJ, které soustava
+neodebere. Stejné metriky jsou v tabulce porovnání scénářů (na stránce
+i v Excelu) a v detailu profilu:
+- mařené teplo celkem [MWh],
+- počet hodin, kdy se teplo maří,
+- průměrně mařené teplo v hodině maření [MWh],
+- průměrná a nejdelší souvislá doba maření [h].
+
+Za hodinu maření se bere hodina se zahozeným teplem nad 1e-6 MW; méně je jen
+numerický šum řešiče.
+
 Měsíční list má dny ve sloupcích a hodiny v řádcích, `P` = provoz (zeleně),
 `X` = klid (červeně). Řádky jsou popsané rovnou intervalem `00:00-01:00` až
 `23:00-24:00`, aby nebylo nutné dohadovat, co znamená „hodina 1".
