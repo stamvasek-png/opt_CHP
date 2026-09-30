@@ -159,6 +159,13 @@ jako celek vydělávají.
 - Výkon si model volí dál (min. zatížení až 100 %), stejně jako u BASE.
 - V celých měsících se min. doba běhu a limit startů za měsíc neuplatní —
   hodiny určuje profil (PROM26 s 3h bloky tak jede i při min. době běhu 4 h).
+- Blok přes půlnoc na přelomu měsíců se mezi měsíce rozdělí. Kus kratší než
+  min. doba běhu jede jen spolu se zbytkem bloku v sousedním měsíci. Příklad:
+  V jede 30. 4. 18–24 a 1. 5. 00–01. Když duben nejede, 1. 5. 00–01 zůstane
+  stát, jinak by KGJ startovala na hodinu. Když jede duben a květen ne, blok
+  doběhne do 01:00. Jsou-li krátké oba kusy, patří blok měsíci, ve kterém
+  začíná. Krátký kus hned na začátku dat nejede (X a Y 1. 1. 00–01): model
+  bere KGJ před začátkem dat jako vypnutou.
 - BASE se nemění, FREE znamená celé měsíce 24/7.
 - Platí pro porovnání profilů, měsíční analýzu, roční plán i citlivostní analýzu.
 - Výstupy a exporty zůstávají stejné; které měsíce solver zvolil, je vidět
@@ -547,6 +554,17 @@ sešit (`kgj_provozni_plan_<profil>.xlsx`):
 | `<PROFIL>` | hodinový rozpad, stejný jako v exportu scénářů |
 | `LEDEN` … | jeden list na měsíc s mřížkou provozu |
 | `Parametry` | použité nastavení |
+
+Souhrn za období ukazuje i **mařené teplo** — teplo z KGJ, které soustava
+neodebere. Stejné metriky jsou v tabulce porovnání scénářů (na stránce
+i v Excelu) a v detailu profilu:
+- mařené teplo celkem [MWh],
+- počet hodin, kdy se teplo maří,
+- průměrně mařené teplo v hodině maření [MWh],
+- průměrná a nejdelší souvislá doba maření [h].
+
+Za hodinu maření se bere hodina se zahozeným teplem nad 1e-6 MW; méně je jen
+numerický šum řešiče.
 
 Měsíční list má dny ve sloupcích a hodiny v řádcích, `P` = provoz (zeleně),
 `X` = klid (červeně). Řádky jsou popsané rovnou intervalem `00:00-01:00` až

@@ -110,6 +110,13 @@ def test_detail_offers_every_profile(page):
     assert detail_switch(at).options == [pr.upper() for pr in profiles]
 
 
+def test_detail_shows_heat_dump(page):
+    at, _ = page
+    labels = {m.label for m in at.metric}
+    assert {'Mařené teplo celkem', 'Hodin maření', 'Průměr v hodině maření',
+            'Průměrné souvislé maření', 'Nejdelší souvislé maření'} <= labels
+
+
 def test_switching_profile_redraws_detail(page):
     at, profiles = page
     target = profiles.index('x')
