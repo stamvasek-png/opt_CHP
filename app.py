@@ -76,6 +76,7 @@ PROFILE_COLORS = {
     'v':          '#BF360C',  # cihlová
     'w':          '#1B5E20',  # tmavě zelená
     'x':          '#4A148C',  # tmavě fialová
+    'y':          '#880E4F',  # vínová
     'offpeak': '#9C27B0',  # fialová
     'special': '#00BCD4',  # tyrkysová
     'custom':  '#607D8B',  # šedá
@@ -306,7 +307,7 @@ def build_parameters_df(params, uses):
         # Fixní výkupní cena EE per profil — pouze zapnuté checkboxy
         for prof in ('free', 'base', 'peak', 'extpeak', 'extpsum',
                      'season', 'seasonplus', 'p', 'prom26', 's', 't', 'u', 'v',
-                     'w', 'x', 'offpeak', 'special'):
+                     'w', 'x', 'y', 'offpeak', 'special'):
             if p.get(f'kgj_ee_fix_{prof}'):
                 add('KGJ', f'Fixní výkupní cena EE — {prof.upper()} [€/MWh]',
                     p.get(f'kgj_ee_fix_price_{prof}', '–'))
@@ -864,7 +865,7 @@ with st.sidebar:
         "Které profily testovat?",
         options=['free', 'base', 'peak', 'extpeak', 'extpsum',
                  'season', 'seasonplus', 'p', 'prom26', 's', 't', 'u', 'v',
-                 'w', 'x', 'offpeak', 'special', 'custom'],
+                 'w', 'x', 'y', 'offpeak', 'special', 'custom'],
         default=['free', 'base', 'peak', 'extpeak', 'offpeak'],
         help="Spusť optimalizaci pro vybrané profily a porovnej je"
     )
@@ -872,7 +873,7 @@ with st.sidebar:
     st.caption(f"📅 PEAK/EXTPEAK/EXTPSUM/OFFPEAK/W respektují víkendy a CZ státní svátky "
                f"({CZ_HOLIDAYS_COVERED_YEARS[0]}–{CZ_HOLIDAYS_COVERED_YEARS[1]}). "
                f"SEASON/SEASON+/P/S/T jedou 7 dní v týdnu — okno určuje jen měsíc a hodina, "
-               f"U, V a X mají pro každý měsíc týdenní šablonu. "
+               f"U, V, X a Y mají pro každý měsíc týdenní šablonu. "
                f"PROM26 přebírá hodiny z dodané masky, včetně výjimečných dní roku 2026.")
 
     if st.session_state.fwd_data is not None and {'peak', 'extpeak', 'extpsum', 'offpeak', 'w'} & set(profiles_to_run):
@@ -900,6 +901,7 @@ with st.sidebar:
         'v':          {'name': 'V (plán pro dispečink)',       'hours': None,                                'desc': 'Blok ≤ 96 h, pauza ≥ 16 h; XI–II Ne 15→St 21 + Čt 13→So 23 | III 17–24 | IV,VI–VIII 18–02 | V 19–01 | IX stojí | X Po 06→Čt 23 + Pá 15–23 + So 16–21'},
         'w':          {'name': 'W (Po–Pá + sobota)',           'hours': None,                                'desc': 'Ne a svátky stojí; I,II,XI,XII Po–Pá 6–24, So 7–22 | III 16–22 | IV,X 17–23 | V–IX 18–24 (So jako Po–Pá)'},
         'x':          {'name': 'X (z cen FWD, ~5000 h)',       'hours': None,                                'desc': 'Blok ≤ 48 h; I,II nepřetržitě s pauzou 1–5 každou 2. noc | XI,XII 6–23 | III Po–Pá 16→10 | IV,V Po–Pá 18→09 | IX 17–23 + Po–Pá 6–10 | X Po–Pá 6–23 | VI–VIII 18–02'},
+        'y':          {'name': 'Y (X s letními rány)',         'hours': None,                                'desc': 'Jako X, jen VI–VIII Po–Pá 5–9 a 18–23 (dva starty), So–Ne 18–24'},
         'offpeak': {'name': 'Offpeak (víkendy+svátky+noc)', 'hours': list(range(0, 8)) + list(range(20, 24)), 'desc': 'Víkendy/svátky 24 h + Po-Pá 20-8 h'},
         'special': {'name': 'Special (měsíční)',           'hours': None,                                    'desc': 'I-V,IX-XII: Po06→Pá22 + So06→Ne22 | VI-VIII: Po06→Čt22'},
     }
@@ -1194,6 +1196,10 @@ with t_tech:
             if p['kgj_ee_fix_x']:
                 p['kgj_ee_fix_price_x'] = st.number_input("X cena [€/MWh]",
                     value=170.0, key="ni_kgj_fix_x")
+            p['kgj_ee_fix_y'] = st.checkbox("Fix cena – Y", value=False, key="cb_kgj_fix_y")
+            if p['kgj_ee_fix_y']:
+                p['kgj_ee_fix_price_y'] = st.number_input("Y cena [€/MWh]",
+                    value=170.0, key="ni_kgj_fix_y")
             p['kgj_ee_fix_offpeak'] = st.checkbox("Fix cena – OFFPEAK", value=False, key="cb_kgj_fix_offpeak")
             if p['kgj_ee_fix_offpeak']:
                 p['kgj_ee_fix_price_offpeak'] = st.number_input("OFFPEAK cena [€/MWh]",

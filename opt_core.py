@@ -300,11 +300,22 @@ X_WEEK_BLOCKS = {
     12: daily_blocks(6, 23),
 }
 
+# Profil Y — X s letními rány. Přesný výběr nejlepšího týdenního vzoru pro
+# každý měsíc (typický týden, stejný počet hodin jako X) se od X liší hlavně
+# v létě: v pracovní dny vynese ranní špička 05–09 víc než noční hodiny 00–02.
+# Y proto ve VI–VIII jede Po–Pá 05–09 a 18–23 (dva starty), o víkendu 18–24;
+# ostatní měsíce má stejné jako X.
+Y_SUMMER_BLOCKS = (daily_blocks(5, 9, range(5)) + daily_blocks(18, 23, range(5))
+                   + daily_blocks(18, 0, (5, 6)))
+Y_WEEK_BLOCKS = {**X_WEEK_BLOCKS,
+                 6: Y_SUMMER_BLOCKS, 7: Y_SUMMER_BLOCKS, 8: Y_SUMMER_BLOCKS}
+
 # Profily daného týdenní šablonou po měsících.
 WEEK_TEMPLATE_PROFILES = {
     'u': U_WEEK_BLOCKS,
     'v': V_WEEK_BLOCKS,
     'x': X_WEEK_BLOCKS,
+    'y': Y_WEEK_BLOCKS,
 }
 
 # Profil W — zadaný tabulkou po měsících: pracovní dny a soboty mají vlastní
@@ -433,6 +444,7 @@ def create_profile_constraints(df, profile_type, custom_hours=None):
                 s pauzou 01–05 každou 2. noc | XI,XII denně 06–23 |
                 III Po–Pá 16 → 10 | IV,V Po–Pá 18 → 09 | IX 17–23 + Po–Pá
                 06–10 | X Po–Pá 06–23 | VI–VIII denně 18–02
+      Y       – jako X, jen VI–VIII Po–Pá 05–09 a 18–23, So–Ne 18–24
       W       – pracovní dny a soboty s oknem po měsících, neděle a CZ
                 svátky stojí: I,II,XI,XII Po–Pá 06–24, So 07–22 | III 16–22 |
                 IV,X 17–23 | V–IX 18–24 (III–X So stejně jako Po–Pá)

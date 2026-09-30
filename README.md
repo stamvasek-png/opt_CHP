@@ -130,13 +130,14 @@ v **novém** okně) a spusť znovu. Ověřování certifikátů nikdy nevypínej
 | `v` | plán pro dispečink: blok max. 96 h, pauza min. 16 h, září stojí (4136 h, níže) |
 | `w` | pracovní dny a soboty s oknem po měsících, neděle a svátky stojí (2946 h, níže) |
 | `x` | z cenové analýzy FWD: nejdražších ~5000 h, blok max. 48 h (5040 h, níže) |
+| `y` | jako `x`, ale v létě navíc ranní špička v pracovní dny (5054 h, níže) |
 | `offpeak` | doplněk peaku: víkendy a svátky celý den + Po–Pá 20:00–08:00 |
 | `special` | měsíční vzor s denním rytmem |
 | `custom` | ručně vybrané hodiny |
 
 `peak`, `extpeak`, `extpsum`, `offpeak` a `w` respektují víkendy i české státní svátky.
 `season`, `seasonplus`, `p`, `s` a `t` jedou 7 dní v týdnu — okno určuje jen
-měsíc a hodina. `u`, `v` a `x` mají pro každý měsíc týdenní šablonu.
+měsíc a hodina. `u`, `v`, `x` a `y` mají pro každý měsíc týdenní šablonu.
 
 ### Profily po celých měsících
 
@@ -449,6 +450,22 @@ pokryje 92 % šesti nejdražších hodin každého dne. Zima má 602 h/měsíc,
 jaro a podzim 416 h/měsíc, léto 245 h/měsíc — pořadí platí i měsíc po
 měsíci. Svátky se chovají jako běžný den v týdnu. Teplo vzor nebere v úvahu:
 v září by KGJ část tepla mařila.
+
+### Y
+
+Varianta `x` s letními rány. Přesný výběr nejlepšího týdenního vzoru pro
+každý měsíc (typický týden den × hodina, stejný počet hodin jako `x`) se od
+`x` liší hlavně v létě: v pracovní dny vynese ranní špička 05–09 víc než noční
+hodiny 00–02. Ostatní měsíce jsou stejné jako u `x`.
+
+| Měsíc | Po–Pá | Sobota, neděle | h/měsíc |
+|---|---|---|---|
+| VI, VII, VIII | 05–09 a 18–23 (dva starty) | 18–24 | 246 / 252 / 252 |
+
+Za rok 2027 to je **5054 h** s průměrnou FWD 170,4 €/MWh (u `x` 170,0) a vzor
+pokryje 94,7 % šesti nejdražších hodin dne (u `x` 92,5 %). Letní průměr FWD
+stoupne ze 165,4 na 168,5 €/MWh, za cenu 66 startů za rok navíc. Pořadí
+zima > jaro/podzim > léto platí dál i měsíc po měsíci.
 
 ## Změna času v provozním plánu
 
